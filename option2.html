@@ -1,0 +1,382 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>MIDI Excerpt Player (Loop + Keyboard + Range)</title>
+
+<script src="https://unpkg.com/tone@14.8.49/build/Tone.js"></script>
+<script src="https://unpkg.com/@tonejs/midi@2.0.28/build/Midi.js"></script>
+
+<style>
+  :root { --bg:#0b0e13; --panel:#141a22; --accent:#6dd3ff; --text:#e9eef5; --muted:#9fb3c8; --danger:#ff6b6b; }
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,"Helvetica Neue",Arial,"Noto Sans",sans-serif}
+  .wrap{max-width:980px;margin:24px auto;padding:16px}
+  .card{background:var(--panel);border-radius:16px;padding:16px;box-shadow:0 10px 30px rgba(0,0,0,.35)}
+  h1{font-size:20px;margin:0 0 10px;font-weight:700}
+  .subtitle{color:var(--muted);font-size:14px;margin-bottom:12px}
+  .controls{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:10px 0 16px}
+  button,.toggle{background:#1c2430;color:var(--text);border:1px solid #273142;border-radius:10px;padding:10px 14px;cursor:pointer;font-weight:600}
+  button:hover,.toggle:hover{border-color:var(--accent)}
+  .toggle.active{outline:2px solid var(--accent)}
+  .sliders,.rangeRow{display:flex;gap:18px;flex-wrap:wrap;align-items:center;padding:10px;border:1px dashed #273142;border-radius:12px}
+  label{font-size:12px;color:var(--muted)}
+  input[type="range"]{width:180px}
+  input[type="text"],input[type="number"]{background:#0f141b;color:var(--text);border:1px solid #273142;border-radius:8px;padding:8px 10px}
+  .kbdShell{background:#0b0f15;border-radius:14px;padding:12px;margin-top:14px;border:1px solid #1b2330}
+  .footer{margin-top:10px;color:var(--muted);font-size:12px}
+  .warn{color:var(--danger)}
+  .hidden{display:none!important}
+  .small{font-size:12px;color:var(--muted)}
+  .grid{display:grid;grid-template-columns:1fr;gap:12px}
+  .btnPrimary{background:linear-gradient(180deg,#1f7aa6,#175a7a);border-color:#1b6f95}
+  .btnPrimary:hover{filter:brightness(1.05)}
+  .fileName{color:var(--accent);font-family:ui-monospace,Menlo,Consolas,monospace}
+  canvas{width:100%;height:auto;display:block}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <h1>MIDI Excerpt Player</h1>
+    <div class="subtitle">
+      Loads <span class="fileName">excerpt1.mid</span>, loops playback, lights keys, and lets you set the visible keyboard range.
+    </div>
+
+    <div class="grid">
+      <div class="controls">
+        <button id="btnStart" class="btnPrimary">Start Audio & Load</button>
+        <button id="btnPlay" disabled>Play</button>
+        <button id="btnPause" disabled>Pause</button>
+        <button id="btnStop" disabled>Stop</button>
+        <button id="btnRew" disabled>⟲ Rewind</button>
+        <button id="btnLoop" class="toggle active" disabled>Loop: On</button>
+      </div>
+
+      <div class="sliders">
+        <div>
+          <label for="tempo">Tempo (%)</label><br>
+          <input id="tempo" type="range" min="50" max="150" step="1" value="100" />
+          <div id="tempoVal" class="small">100%</div>
+        </div>
+        <div>
+          <label for="vol">Volume (dB)</label><br>
+          <input id="vol" type="range" min="-36" max="0" step="1" value="-6" />
+          <div id="volVal" class="small">-6 dB</div>
+        </div>
+        <div>
+          <label for="rewTo">Rewind to (s)</label><br>
+          <input id="rewTo" type="number" min="0" step="0.1" value="0" style="width:100px" />
+        </div>
+      </div>
+
+      <!-- NEW: Range controls -->
+      <div class="rangeRow">
+        <div>
+          <label for="lowNote">Display range — Low (note or MIDI)</label><br>
+          <input id="lowNote" type="text" value="A0" style="width:110px" />
+        </div>
+        <div>
+          <label for="highNote">Display range — High (note or MIDI)</label><br>
+          <input id="highNote" type="text" value="C8" style="width:110px" />
+        </div>
+        <div style="display:flex;gap:10px;align-items:end">
+          <button id="btnApplyRange">Apply Range</button>
+          <button id="btnFitRange" title="Set range to the min/max notes found in the MIDI">Fit to MIDI notes</button>
+        </div>
+        <div class="small">Examples: <code>C3</code>, <code>F#5</code>, <code>60</code>, <code>72</code>. Valid range is A0 (21) to C8 (108).</div>
+      </div>
+
+      <div class="kbdShell">
+        <canvas id="piano" width="1800" height="260" aria-label="Piano keyboard visualization"></canvas>
+      </div>
+
+      <div id="status" class="footer">Ready. Click <b>Start Audio & Load</b> to initialize (required by browser).</div>
+      <div id="error" class="footer warn hidden"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+(async function () {
+  const statusEl = document.getElementById('status');
+  const errorEl  = document.getElementById('error');
+  const btnStart = document.getElementById('btnStart');
+  const btnPlay  = document.getElementById('btnPlay');
+  const btnPause = document.getElementById('btnPause');
+  const btnStop  = document.getElementById('btnStop');
+  const btnRew   = document.getElementById('btnRew');
+  const btnLoop  = document.getElementById('btnLoop');
+
+  const tempo    = document.getElementById('tempo');
+  const tempoVal = document.getElementById('tempoVal');
+  const vol      = document.getElementById('vol');
+  const volVal   = document.getElementById('volVal');
+  const rewTo    = document.getElementById('rewTo');
+
+  const lowNote  = document.getElementById('lowNote');
+  const highNote = document.getElementById('highNote');
+  const btnApplyRange = document.getElementById('btnApplyRange');
+  const btnFitRange   = document.getElementById('btnFitRange');
+
+  const piano    = document.getElementById('piano');
+  const ctx      = piano.getContext('2d');
+
+  // Default full 88-key range
+  const ABS_MIN = 21; // A0
+  const ABS_MAX = 108; // C8
+  let displayFirst = ABS_MIN;
+  let displayLast  = ABS_MAX;
+
+  let midi, part, synth;
+  let baseBpm = 120;
+  let durationSec = 0;
+  let loopEnabled = true;
+
+  // Active notes for viz
+  const activeNotes = new Set();
+
+  function isBlack(midi) {
+    const pc = (midi % 12);
+    return [1,3,6,8,10].includes(pc); // C#,D#,F#,G#,A#
+  }
+
+  function drawKeyboard() {
+    const W = piano.width, H = piano.height;
+    ctx.clearRect(0, 0, W, H);
+
+    const keys = [];
+    for (let m = displayFirst; m <= displayLast; m++) keys.push(m);
+
+    const whites = keys.filter(k => !isBlack(k)).length;
+    const whiteW = W / whites;
+    const whiteH = H;
+
+    const whiteX = new Map();
+    let xw = 0;
+    for (let m = displayFirst; m <= displayLast; m++) {
+      if (!isBlack(m)) {
+        whiteX.set(m, xw);
+        const isActive = activeNotes.has(m);
+        ctx.fillStyle = isActive ? "#cdefff" : "#f7f9fc";
+        ctx.fillRect(xw, 0, whiteW, whiteH);
+        ctx.strokeStyle = "#c8d6e5";
+        ctx.lineWidth = 1;
+        ctx.strokeRect(xw, 0, whiteW, whiteH);
+        xw += whiteW;
+      }
+    }
+
+    const blackW = whiteW * 0.62;
+    const blackH = whiteH * 0.62;
+    for (let m = displayFirst; m <= displayLast; m++) {
+      if (isBlack(m)) {
+        let prev = m - 1; while (prev >= displayFirst && isBlack(prev)) prev--;
+        let next = m + 1; while (next <= displayLast  && isBlack(next)) next++;
+
+        if (!whiteX.has(prev) || !whiteX.has(next)) continue;
+        const xPrev = whiteX.get(prev);
+        const xNext = whiteX.get(next);
+        const center = (xPrev + xNext + whiteW) / 2;
+        const x = center - blackW / 2;
+
+        const isActive = activeNotes.has(m);
+        ctx.fillStyle = isActive ? "#74c0fc" : "#1d232b";
+        ctx.fillRect(x, 0, blackW, blackH);
+        ctx.strokeStyle = "#0f141b";
+        ctx.strokeRect(x, 0, blackW, blackH);
+      }
+    }
+  }
+
+  function noteOn(m) {
+    if (m >= displayFirst && m <= displayLast) {
+      activeNotes.add(m);
+      Tone.Draw.schedule(() => drawKeyboard(), Tone.now());
+    }
+  }
+  function noteOff(m) {
+    if (activeNotes.delete(m)) {
+      Tone.Draw.schedule(() => drawKeyboard(), Tone.now());
+    }
+  }
+
+  drawKeyboard();
+
+  function setStatus(msg){ statusEl.textContent = msg; }
+  function setError(msg){ errorEl.textContent = msg; errorEl.classList.remove('hidden'); }
+  function clearError(){ errorEl.classList.add('hidden'); errorEl.textContent = ""; }
+
+  function enableTransport(enabled){
+    [btnPlay, btnPause, btnStop, btnRew, btnLoop].forEach(b => b.disabled = !enabled);
+  }
+
+  function applyTempoUI(){
+    const pct = Number(tempo.value);
+    tempoVal.textContent = pct + "%";
+    const newBpm = Math.max(30, Math.min(300, baseBpm * (pct / 100)));
+    Tone.Transport.bpm.value = newBpm;
+  }
+
+  function applyVolumeUI(){
+    const db = Number(vol.value);
+    volVal.textContent = db + " dB";
+    Tone.Destination.volume.value = db;
+  }
+
+  function parseNoteOrMidi(v){
+    const s = String(v).trim();
+    if (s === "") return null;
+    if (/^\d+$/.test(s)) {
+      return Number(s);
+    }
+    try {
+      return Tone.Frequency(s).toMidi();
+    } catch { return null; }
+  }
+
+  function clampRange(lo, hi){
+    let a = Math.max(ABS_MIN, Math.min(ABS_MAX, lo));
+    let b = Math.max(ABS_MIN, Math.min(ABS_MAX, hi));
+    if (a > b) [a, b] = [b, a];
+    return [a, b];
+  }
+
+  function applyRangeFromInputs(){
+    const lo = parseNoteOrMidi(lowNote.value);
+    const hi = parseNoteOrMidi(highNote.value);
+    if (lo == null || hi == null) {
+      setError("Invalid range. Use note names (e.g., C3, F#5) or MIDI numbers (21–108).");
+      return false;
+    }
+    const [a, b] = clampRange(lo, hi);
+    displayFirst = a; displayLast = b;
+    clearError();
+    activeNotes.clear();
+    drawKeyboard();
+    setStatus(`Display range set to ${a}–${b} (MIDI).`);
+    return true;
+  }
+
+  async function loadAndBuild(){
+    clearError();
+    setStatus("Loading excerpt1.mid …");
+    try {
+      midi = await Midi.fromUrl("./excerpt1.mid");
+    } catch (e) {
+      setError("Could not load excerpt1.mid. Ensure this HTML and the MIDI are in the same folder and served over HTTP(S).");
+      console.error(e); return;
+    }
+
+    baseBpm = midi.header.tempos?.[0]?.bpm || 120;
+    durationSec = midi.duration || 0;
+    Tone.Transport.bpm.value = baseBpm;
+    rewTo.value = 0;
+
+    if (synth) synth.dispose();
+    synth = new Tone.PolySynth(Tone.Synth, {
+      oscillator:{ type:"triangle" },
+      envelope:{ attack:0.005, decay:0.2, sustain:0.2, release:0.8 }
+    }).toDestination();
+
+    if (part) { part.dispose(); part = null; }
+
+    const events = [];
+    midi.tracks.forEach(t => {
+      t.notes.forEach(n => {
+        events.push({ time:n.time, midi:n.midi, duration:n.duration, velocity:n.velocity });
+      });
+    });
+    events.sort((a,b)=>a.time-b.time);
+
+    part = new Tone.Part((time, ev) => {
+      const freq = Tone.Frequency(ev.midi, "midi");
+      synth.triggerAttackRelease(freq, ev.duration, time, ev.velocity);
+      Tone.Draw.schedule(() => noteOn(ev.midi), time);
+      Tone.Draw.schedule(() => noteOff(ev.midi), time + ev.duration);
+    }, events).start(0);
+
+    Tone.Transport.loop = loopEnabled;
+    Tone.Transport.loopStart = 0;
+    Tone.Transport.loopEnd = durationSec + 0.01;
+
+    applyTempoUI();
+    applyVolumeUI();
+    enableTransport(true);
+    btnLoop.classList.toggle("active", loopEnabled);
+    btnLoop.textContent = `Loop: ${loopEnabled ? "On" : "Off"}`;
+
+    setStatus(`Loaded. Duration: ${durationSec.toFixed(2)} s — Base tempo: ${baseBpm} BPM.`);
+  }
+
+  // Fit range to MIDI content (min/max note)
+  function fitRangeToMidi(){
+    if (!midi) return;
+    let lo = Infinity, hi = -Infinity;
+    midi.tracks.forEach(t => t.notes.forEach(n => {
+      if (n.midi < lo) lo = n.midi;
+      if (n.midi > hi) hi = n.midi;
+    }));
+    if (!isFinite(lo) || !isFinite(hi)) return;
+    const [a,b] = clampRange(lo, hi);
+    displayFirst = a; displayLast = b;
+    lowNote.value = a.toString();
+    highNote.value = b.toString();
+    activeNotes.clear();
+    drawKeyboard();
+    setStatus(`Display range auto-fit to MIDI: ${a}–${b} (MIDI).`);
+  }
+
+  // Controls
+  btnStart.addEventListener('click', async () => {
+    try {
+      await Tone.start();
+      btnStart.disabled = true;
+      setStatus("Audio unlocked. Loading MIDI…");
+      await loadAndBuild();
+    } catch (e) {
+      setError("Could not start audio context."); console.error(e);
+    }
+  });
+
+  btnPlay.addEventListener('click', async () => { if (!part) return; await Tone.Transport.start("+0.01"); setStatus("Playing…"); });
+  btnPause.addEventListener('click', async () => { await Tone.Transport.pause(); setStatus("Paused."); });
+  btnStop.addEventListener('click', async () => { await Tone.Transport.stop(); activeNotes.clear(); drawKeyboard(); setStatus("Stopped."); });
+  btnRew.addEventListener('click', () => {
+    const t = Math.max(0, Number(rewTo.value) || 0);
+    Tone.Transport.seconds = Math.min(t, durationSec);
+    setStatus(`Rewound to ${Tone.Transport.seconds.toFixed(2)} s.`);
+  });
+  btnLoop.addEventListener('click', () => {
+    loopEnabled = !loopEnabled; Tone.Transport.loop = loopEnabled;
+    btnLoop.classList.toggle("active", loopEnabled);
+    btnLoop.textContent = `Loop: ${loopEnabled ? "On" : "Off"}`;
+    setStatus(`Loop ${loopEnabled ? "enabled" : "disabled"}.`);
+  });
+
+  tempo.addEventListener('input', applyTempoUI);
+  vol.addEventListener('input', applyVolumeUI);
+
+  btnApplyRange.addEventListener('click', applyRangeFromInputs);
+  btnFitRange.addEventListener('click', fitRangeToMidi);
+
+  // DPI crispness
+  function resizeCanvasForDPR() {
+    const dpr = Math.max(1, Math.floor(window.devicePixelRatio || 1));
+    const cssWidth = piano.clientWidth;
+    const cssHeight = piano.clientHeight || 260;
+    piano.width = Math.round(cssWidth * dpr);
+    piano.height = Math.round(cssHeight * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    drawKeyboard();
+  }
+  const ro = new ResizeObserver(resizeCanvasForDPR);
+  ro.observe(piano);
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) { activeNotes.clear(); drawKeyboard(); }
+  });
+})();
+</script>
+</body>
+</html>

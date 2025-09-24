@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <title>Excerpt – Keyboard Lights</title>
+
+  <script src="https://cdn.jsdelivr.net/combine/npm/tone@14.7.58,npm/@magenta/music@1.23.1/es6/core.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html-midi-player/1.6.0/midi-player.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/gh/micahscopes/all-around-keyboard/dist/all-around-keyboard.min.js"></script>
+
+  <style>
+    body{font-family:system-ui,Arial,sans-serif;padding:24px;background:#f5f7fb}
+    midi-player{display:block;margin:10px 0}
+    midi-visualizer{width:100%;height:220px;display:block;border:1px solid #ccc;border-radius:8px;background:#fff}
+    all-around-keyboard{width:100%;height:170px;display:block;border:1px solid #ccc;border-radius:8px;margin-top:10px}
+    .controls{display:flex;gap:14px;align-items:center;margin:8px 0}
+    input[type="range"]{width:220px}
+    button{padding:8px 12px}
+  </style>
+</head>
+<body>
+  <h1>🎹 Piano Roll + Leucht-Keyboard</h1>
+
+  <div class="controls">
+    <button id="unlock">Audio starten</button>
+    <label><strong>Tempo:</strong> <span id="bpmVal">100</span> BPM</label>
+    <input id="bpm" type="range" min="50" max="160" step="1" value="100">
+    <label><input id="loop" type="checkbox"> Ganze Passage wiederholen</label>
+  </div>
+
+  <!-- KEEP this structure: no sound-font; slotted visualizer -->
+  <midi-player id="player" src="excerpt1.mid" controls>
+    <midi-visualizer slot="visualizer" type="piano-roll"></midi-visualizer>
+  </midi-player>
+
+  <all-around-keyboard id="kb" octaves="2" width="900" depth="120"></all-around-keyboard>
+
+  <script>
+    // Unlock audio
+    document.getElementById('unlock').addEventListener('click', ()=>{
+      if (window.Tone && Tone.context.state !== 'running') Tone.context.resume();
+    }, { once:true });
+
+    // Tempo / Loop
+    const player = document.getElementById('player');
+    const bpm = document.getElementById('bpm');
+    const bpmVal = document.getElementById('bpmVal');
+    const loop = document.getElementById('loop');
+    const setBPM = v => { if (window.Tone) Tone.Transport.bpm.value = Number(v); };
+    bpm.addEventListener('input', e => { bpmVal.textContent = e.target.value; setBPM(e.target.value); });
+    setBPM(bpm.value);
+    player.addEventListener('stop', ()=>{ if (loop.checked){ try{player.seekTo?.(0);}catch(_){} setTimeout(()=>player.play(),30);} });
+
+    // Keyboard lighting — robust scheduling
+    const kb = document.getElementById('kb');
+    const LOWEST_PITCH = 60; // C4
+    const TOTAL_KEYS = 12 * (parseInt(kb.getAttribute('octaves')) || 2);
+    const toIdx = p => p - LOWEST_PITCH;
+
+    let scheduled = [];
+    function clearScheduled(){
+      if (window.Tone) scheduled.forEach(id => Tone.Draw.cancel(id));
+      scheduled = [];
+      kb.keysDim(Array.from({length: TOTAL_KEYS}, (_,i)=>i));
+    }
+    function schedule(seq){
+      clearScheduled();
+      for (const n of seq.notes){
+        const i = toIdx(n.pitch);
+        if (i < 0 || i >= TOTAL_KEYS) continue;
+        scheduled.push(Tone.Draw.schedule(()=>kb.keysLight([i]), n.startTime));
+        scheduled.push(Tone.Draw.schedule(()=>kb.keysDim([i]),   n.endTime));
+      }
+    }
+
+    // (Re)build schedule when MIDI is ready and whenever Play starts (keeps tempo changes aligned)
+    player.addEventListener('load', ()=>{ if (player.noteSequence) schedule(player.noteSequence); });
+    player.addEventListener('play', ()=>{ if (player.noteSequence) schedule(player.noteSequence); });
+    player.addEventListener('pause', clearScheduled);
+    player.addEventListener('stop',  clearScheduled);
+  </script>
+</body>
+</html>

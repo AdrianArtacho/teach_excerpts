@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <title>Practice Excerpt – Stable</title>
+
+  <!-- 1) Load Tone + Magenta first -->
+  <script src="https://cdn.jsdelivr.net/combine/npm/tone@14.7.58,npm/@magenta/music@1.23.1/es6/core.js"></script>
+
+  <!-- 2) Load the web component -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html-midi-player/1.6.0/midi-player.min.js"></script>
+
+  <!-- 3) Keyboard component -->
+  <script src="https://cdn.jsdelivr.net/gh/micahscopes/all-around-keyboard/dist/all-around-keyboard.min.js"></script>
+
+  <style>
+    body { font-family: system-ui, Arial, sans-serif; background:#f5f7fb; color:#222; padding:24px; }
+    midi-player { display:block; margin:12px 0; }
+    midi-visualizer { width:100%; height:220px; display:block; border:1px solid #ccc; border-radius:8px; background:#fff; margin:10px 0 16px; }
+    all-around-keyboard { width:100%; height:170px; display:block; border:1px solid #ccc; border-radius:8px; }
+    .row { display:flex; gap:16px; align-items:center; flex-wrap:wrap; }
+    button { padding:8px 12px; border-radius:8px; border:1px solid #ccc; background:#fff; cursor:pointer; }
+    label { font-size:.95rem; }
+    input[type="range"]{ width:220px; }
+  </style>
+</head>
+<body>
+  <h1>🎹 Üben – Piano Roll & Leucht-Keyboard</h1>
+
+  <div class="row" style="margin-bottom:8px">
+    <button id="unlock">Audio starten</button>
+    <label><strong>Tempo:</strong> <span id="tempoVal">100</span> BPM</label>
+    <input id="tempo" type="range" min="50" max="160" step="1" value="100" />
+    <label><input type="checkbox" id="loopAll"> Ganze Passage wiederholen</label>
+  </div>
+
+  <!-- Player ONLY; we’ll attach the visualizer in JS to avoid the init race -->
+  <!-- IMPORTANT: no sound-font attribute => built-in synth -->
+  <midi-player id="player" src="excerpt1.mid" controls></midi-player>
+
+  <!-- Keyboard will be inserted by JS after load -->
+  <div id="kbdMount"></div>
+
+  <script>
+    // ---- Audio unlock (Chrome autoplay policy)
+    document.getElementById('unlock').addEventListener('click', () => {
+      if (window.Tone && Tone.context.state !== 'running') Tone.context.resume();
+    }, { once:true });
+
+    const player = document.getElementById('player');
+
+    // ---- Attach visualizer AFTER the component is defined to avoid "No element was found."
+    customElements.whenDefined('midi-player').then(() => {
+      const viz = document.createElement('midi-visualizer');
+      viz.setAttribute('type', 'piano-roll');
+      viz.setAttribute('slot', 'visualizer');
+      player.appendChild(viz);
+    });
+
+    // ---- Tempo control (affects Tone.Transport)
+    const tempo = document.getElementById('tempo');
+    const tempoVal = document.getElementById('tempoVal');
+    const setBPM = v => { if (window.Tone) Tone.Transport.bpm.value = Number(v); };
+    tempo.addEventListener('input', e => { tempoVal.textContent = e.target.value; setBPM(e.target.value); });
+    setBPM(tempo.value);
+
+    // ---- Loop at end
+    const loopAll = document.getElementById('loopAll');
+    player.addEventListener('stop', () => {
+      if (loopAll.checked) { try { player.seekTo?.(0); } catch (e) {} setTimeout(() => player.play(), 30); }
+    });
+
+    // ---- Lighting keyboard (created AFTER MIDI is loaded)
+    const LOWEST_PITCH = 60; // C4. Change to 48 for C3, etc.
+    let scheduled = [];
+    function clearScheduled(TOTAL_KEYS, kb){
+      if (window.Tone) scheduled.forEach(id => Tone.Draw.cancel(id));
+      scheduled = [];
+      kb.keysDim(Array.from({length: TOTAL_KEYS}, (_,i)=>i));
+    }
+    function schedule(seq, kb, TOTAL_KEYS){
+      clearScheduled(TOTAL_KEYS, kb);
+      const toIdx = p => p - LOWEST_PITCH;
+      for (const n of seq.notes) {
+        const i = toIdx(n.pitch);
+        if (i < 0 || i >= TOTAL_KEYS) continue;
+        scheduled.push(Tone.Draw.schedule(() => kb.keysLight([i]), n.startTime));
+        scheduled.push(Tone.Draw.schedule(() => kb.keysDim([i]),   n.endTime));
+      }
+    }
+
+    player.addEventListener('load', () => {
+      // create keyboard on first load
+      let kb = document.getElementById('kb');
+      if (!kb) {
+        kb = document.createElement('all-around-keyboard');
+        kb.id = 'kb';
+        kb.setAttribute('octaves', '2');   // adjust if you need more
+        kb.setAttribute('width', '900');
+        kb.setAttribute('depth', '120');
+        document.getElementById('kbdMount').appendChild(kb);
+      }
+      const TOTAL_KEYS = 12 * (parseInt(kb.getAttribute('octaves')) || 2);
+      if (player.noteSequence) schedule(player.noteSequence, kb, TOTAL_KEYS);
+    });
+
+    player.addEventListener('stop', () => {
+      const kb = document.getElementById('kb');
+      if (kb) {
+        const TOTAL_KEYS = 12 * (parseInt(kb.getAttribute('octaves')) || 2);
+        clearScheduled(TOTAL_KEYS, kb);
+      }
+    });
+  </script>
+</body>
+</html>
+

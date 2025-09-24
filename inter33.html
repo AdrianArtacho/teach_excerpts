@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <title>Excerpt – stable</title>
+
+  <!-- 1) Defer scripts (order preserved) -->
+  <script defer src="https://cdn.jsdelivr.net/combine/npm/tone@14.7.58,npm/@magenta/music@1.23.1/es6/core.js"></script>
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/html-midi-player/1.6.0/midi-player.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/gh/micahscopes/all-around-keyboard/dist/all-around-keyboard.min.js"></script>
+
+  <style>
+    midi-visualizer{width:100%;height:220px;display:block;border:1px solid #ccc;border-radius:8px;background:#fff;margin:10px 0 16px}
+    all-around-keyboard{width:100%;height:170px;display:block;border:1px solid #ccc;border-radius:8px}
+  </style>
+</head>
+<body>
+  <!-- Visualizer is slotted INSIDE (no visualizer="#…") -->
+  <midi-player id="player" src="excerpt1.mid" controls>
+    <midi-visualizer slot="visualizer" type="piano-roll"></midi-visualizer>
+  </midi-player>
+
+  <all-around-keyboard id="kb" octaves="2" width="900" depth="120"></all-around-keyboard>
+
+  <!-- 2) Wrap ALL your wiring in DOMContentLoaded -->
+  <script>
+  document.addEventListener('DOMContentLoaded', () => {
+    const player = document.getElementById('player');
+    const kb = document.getElementById('kb');
+
+    // optional: unlock button if you use one
+    // document.getElementById('unlock')?.addEventListener('click', () => {
+    //   if (window.Tone && Tone.context.state !== 'running') Tone.context.resume();
+    // }, { once:true });
+
+    // ---- loop using Transport (rock solid)
+    const loopCb = document.getElementById('loop'); // if you have a checkbox
+    let loopEnd = 0;
+    player.addEventListener('load', () => {
+      loopEnd = player.noteSequence?.totalTime || 0;
+      Tone.Transport.setLoopPoints(0, loopEnd);
+      if (loopCb) Tone.Transport.loop = loopCb.checked;
+    });
+    player.addEventListener('play', () => {
+      if (loopEnd <= 0 && player.noteSequence) loopEnd = player.noteSequence.totalTime || 0;
+      Tone.Transport.setLoopPoints(0, loopEnd);
+      if (loopCb) Tone.Transport.loop = loopCb.checked;
+    });
+    loopCb?.addEventListener('change', () => {
+      Tone.Transport.setLoopPoints(0, loopEnd);
+      Tone.Transport.loop = loopCb.checked;
+    });
+    player.addEventListener('pause', () => { Tone.Transport.loop = false; });
+    player.addEventListener('stop',  () => { Tone.Transport.loop = false; Tone.Transport.seconds = 0; });
+
+    // ---- keyboard lights (safe, frame-by-frame)
+    const LOWEST_PITCH = 60; // C4
+    const OCTAVES = parseInt(kb.getAttribute('octaves')) || 2;
+    const TOTAL_KEYS = 12 * OCTAVES;
+    const toIdx = p => p - LOWEST_PITCH;
+
+    let notes = [];
+    player.addEventListener('load', () => {
+      notes = (player.noteSequence?.notes || []).map(n => ({p:n.pitch,s:n.startTime,e:n.endTime}));
+    });
+
+    let rafId = null, prevIdx = new Set();
+    const stopLights = () => { if (rafId) cancelAnimationFrame(rafId); rafId=null; kb.keysDim(Array.from({length:TOTAL_KEYS},(_,i)=>i)); prevIdx.clear(); };
+    const startLights = () => {
+      stopLights(); if (!notes.length) return;
+      const tick = () => {
+        const t = typeof player.currentTime === 'number' ? player.currentTime : (Tone?.Transport?.seconds||0);
+        const on = new Set();
+        for (const n of notes) if (t >= n.s && t < n.e) { const i=toIdx(n.p); if (i>=0 && i<TOTAL_KEYS) on.add(i); }
+        const light=[], dim=[]; for (const i of on) if (!prevIdx.has(i)) light.push(i); for (const i of prevIdx) if (!on.has(i)) dim.push(i);
+        if (light.length) kb.keysLight(light); if (dim.length) kb.keysDim(dim);
+        prevIdx = on; rafId = requestAnimationFrame(tick);
+      };
+      rafId = requestAnimationFrame(tick);
+    };
+    player.addEventListener('play', startLights);
+    player.addEventListener('pause', stopLights);
+    player.addEventListener('stop',  stopLights);
+    player.addEventListener('load',  () => { if (Tone?.Transport?.state === 'started') startLights(); });
+  });
+  </script>
+</body>
+</html>

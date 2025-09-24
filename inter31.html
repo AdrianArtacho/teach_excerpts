@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <title>Practice Excerpt – Stable + Keyboard</title>
+
+  <!-- Load Tone + Magenta FIRST -->
+  <script src="https://cdn.jsdelivr.net/combine/npm/tone@14.7.58,npm/@magenta/music@1.23.1/es6/core.js"></script>
+  <!-- Then the midi player (bundled web component) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html-midi-player/1.6.0/midi-player.min.js"></script>
+  <!-- Keyboard component -->
+  <script src="https://cdn.jsdelivr.net/gh/micahscopes/all-around-keyboard/dist/all-around-keyboard.min.js"></script>
+
+  <style>
+    :root { --c1:#2f6fab; --c2:#f5f7fb; --c3:#222; --c4:#d7dbe4; }
+    body { font-family: system-ui, Arial, sans-serif; background: var(--c2); color: var(--c3); padding: 24px; }
+    h1 { margin: 0 0 12px; color: var(--c1); }
+    .card { background:#fff; border:1px solid var(--c4); border-radius:12px; padding:16px; max-width: 980px; }
+    midi-player { display:block; margin: 8px 0; }
+    midi-visualizer { width:100%; height:220px; display:block; border:1px solid var(--c4); border-radius:10px; background:#fff; margin:10px 0 16px; }
+    all-around-keyboard { width:100%; height:170px; display:block; border:1px solid var(--c4); border-radius:10px; }
+    .controls { display:flex; gap:16px; align-items:center; flex-wrap:wrap; margin:8px 0 6px; }
+    .controls input[type="range"] { width:220px; }
+    button { padding:8px 12px; border-radius:8px; border:1px solid var(--c4); background:#fff; cursor:pointer; }
+    .hint { font-size: 0.9rem; color:#555; margin: 6px 0 0; }
+  </style>
+</head>
+<body>
+  <h1>🎹 Üben – Piano Roll & Leucht-Keyboard</h1>
+  <div class="card">
+    <div class="controls">
+      <button id="unlock">Audio starten</button>
+      <label><strong>Tempo:</strong> <span id="bpmVal">100</span> BPM</label>
+      <input id="bpm" type="range" min="50" max="160" step="1" value="100" />
+      <label><input id="loop" type="checkbox"> Ganze Passage wiederholen</label>
+    </div>
+
+    <!-- IMPORTANT:
+         - No 'visualizer="..."' attribute here
+         - One visualizer, slotted inside -->
+    <midi-player id="player" src="excerpt1.mid" controls>
+      <midi-visualizer slot="visualizer" type="piano-roll"></midi-visualizer>
+    </midi-player>
+
+    <!-- Keyboard lives UNDER the player -->
+    <all-around-keyboard id="kb" octaves="2" width="900" depth="120"></all-around-keyboard>
+
+    <p class="hint">Kein Ton? Erst auf <em>Audio starten</em> klicken (Autoplay-Schutz).</p>
+  </div>
+
+  <script>
+    // ---------- Audio unlock ----------
+    document.getElementById('unlock').addEventListener('click', () => {
+      if (window.Tone && Tone.context.state !== 'running') Tone.context.resume();
+    }, { once:true });
+
+    const player = document.getElementById('player');
+
+    // ---------- Tempo ----------
+    const bpm = document.getElementById('bpm');
+    const bpmVal = document.getElementById('bpmVal');
+    const setBPM = v => { if (window.Tone) Tone.Transport.bpm.value = Number(v); };
+    bpm.addEventListener('input', e => { bpmVal.textContent = e.target.value; setBPM(e.target.value); });
+    setBPM(bpm.value);
+
+    // ---------- Loop (Transport-based, rock solid) ----------
+    const loopCb = document.getElementById('loop');
+    let loopEnd = 0; // seconds
+
+    player.addEventListener('load', () => {
+      loopEnd = (player.noteSequence?.totalTime || 0);
+      Tone.Transport.setLoopPoints(0, loopEnd);
+      Tone.Transport.loop = loopCb.checked;
+    });
+
+    player.addEventListener('play', () => {
+      if (loopEnd <= 0 && player.noteSequence) loopEnd = player.noteSequence.totalTime || 0;
+      Tone.Transport.setLoopPoints(0, loopEnd);
+      Tone.Transport.loop = loopCb.checked;
+    });
+
+    loopCb.addEventListener('change', () => {
+      if (loopEnd <= 0 && player.noteSequence) loopEnd = player.noteSequence.totalTime || 0;
+      Tone.Transport.setLoopPoints(0, loopEnd);
+      Tone.Transport.loop = loopCb.checked;
+    });
+
+    player.addEventListener('pause', () => { Tone.Transport.loop = false; });
+    player.addEventListener('stop',  () => { Tone.Transport.loop = false; Tone.Transport.seconds = 0; });
+
+    // ---------- Lighting keyboard (loop-safe, tempo-safe) ----------
+    const kb = document.getElementById('kb');
+    const LOWEST_PITCH = 60; // C4
+    const OCTAVES = parseInt(kb.getAttribute('octaves')) || 2;
+    const TOTAL_KEYS = 12 * OCTAVES;
+    const toIndex = p => p - LOWEST_PITCH;
+
+    let notes = [];
+    player.addEventListener('load', () => {
+      notes = (player.noteSequence?.notes || []).map(n => ({ p:n.pitch, s:n.startTime, e:n.endTime }));
+    });
+
+    let rafId = null;
+    let prevIdx = new Set();
+
+    function stopLights() {
+      if (rafId) cancelAnimationFrame(rafId);
+      rafId = null;
+      kb.keysDim(Array.from({length: TOTAL_KEYS}, (_, i) => i));
+      prevIdx.clear();
+    }
+
+    function startLights() {
+      stopLights();
+      if (!notes.length) return;
+
+      const tick = () => {
+        const t = (typeof player.currentTime === 'number')
+          ? player.currentTime
+          : (window.Tone?.Transport?.seconds || 0);
+
+        const active = new Set();
+        for (const n of notes) {
+          if (t >= n.s && t < n.e) {
+            const idx = toIndex(n.p);
+            if (idx >= 0 && idx < TOTAL_KEYS) active.add(idx);
+          }
+        }
+
+        const toLight = [], toDim = [];
+        for (const i of active) if (!prevIdx.has(i)) toLight.push(i);
+        for (const i of prevIdx) if (!active.has(i)) toDim.push(i);
+        if (toLight.length) kb.keysLight(toLight);
+        if (toDim.length)   kb.keysDim(toDim);
+
+        prevIdx = active;
+        rafId = requestAnimationFrame(tick);
+      };
+
+      rafId = requestAnimationFrame(tick);
+    }
+
+    player.addEventListener('play',  startLights);
+    player.addEventListener('pause', stopLights);
+    player.addEventListener('stop',  stopLights);
+    player.addEventListener('load',  () => {
+      if (window.Tone?.Transport?.state === 'started') startLights();
+    });
+  </script>
+</body>
+</html>

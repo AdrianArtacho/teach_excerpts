@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <title>Excerpt – Tempo + Loop</title>
+
+  <script src="https://cdn.jsdelivr.net/combine/npm/tone@14.7.58,npm/@magenta/music@1.23.1/es6/core.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html-midi-player/1.6.0/midi-player.min.js"></script>
+
+  <style>
+    body{font-family:system-ui,Arial,sans-serif;padding:24px;background:#f5f7fb}
+    midi-player{display:block;margin:10px 0}
+    midi-visualizer{width:100%;height:220px;display:block;border:1px solid #ccc;border-radius:8px;background:#fff}
+    .controls{display:flex;gap:14px;align-items:center;margin:8px 0}
+    input[type="range"]{width:220px}
+    button{padding:8px 12px}
+  </style>
+  <script src="https://cdn.jsdelivr.net/gh/micahscopes/all-around-keyboard/dist/all-around-keyboard.min.js"></script>
+
+</head>
+<body>
+  <h1>🎹 Tempo + Loop</h1>
+
+  <div class="controls">
+    <button id="unlock">Audio starten</button>
+    <label><strong>Tempo:</strong> <span id="bpmVal">100</span> BPM</label>
+    <input id="bpm" type="range" min="50" max="160" step="1" value="100">
+    <label><input id="loop" type="checkbox"> Ganze Passage wiederholen</label>
+  </div>
+
+  <!-- No sound-font; visualizer slotted inside -->
+  <midi-player id="player" src="excerpt1.mid" controls>
+    <midi-visualizer slot="visualizer" type="piano-roll"></midi-visualizer>
+  </midi-player>
+
+  <all-around-keyboard id="kb" octaves="2" width="900" depth="120"></all-around-keyboard>
+
+
+  <script>
+    // Unlock audio (Chrome autoplay)
+    document.getElementById('unlock').addEventListener('click', ()=>{
+      if (window.Tone && Tone.context.state !== 'running') Tone.context.resume();
+    }, { once:true });
+
+    // Tempo
+    const bpm = document.getElementById('bpm');
+    const bpmVal = document.getElementById('bpmVal');
+    const setBPM = v => { if (window.Tone) Tone.Transport.bpm.value = Number(v); };
+    bpm.addEventListener('input', e => { bpmVal.textContent = e.target.value; setBPM(e.target.value); });
+    setBPM(bpm.value);
+</script>
+<script>
+  const player = document.getElementById('player');
+  const loopCb = document.getElementById('loop');
+
+  let loopEnd = 0; // seconds
+
+  // Set loop points when the MIDI is loaded
+  player.addEventListener('load', () => {
+    loopEnd = (player.noteSequence?.totalTime || 0);
+    // prime Transport loop points to the piece length
+    Tone.Transport.setLoopPoints(0, loopEnd);
+    Tone.Transport.loop = loopCb.checked;
+  });
+
+  // Apply loop on play (covers the case where user ticks loop before pressing Play)
+  player.addEventListener('play', () => {
+    if (loopEnd <= 0 && player.noteSequence) {
+      loopEnd = player.noteSequence.totalTime || 0;
+    }
+    Tone.Transport.setLoopPoints(0, loopEnd);
+    Tone.Transport.loop = loopCb.checked;
+  });
+
+  // If the user toggles the checkbox mid-playback
+  loopCb.addEventListener('change', () => {
+    if (loopEnd <= 0 && player.noteSequence) {
+      loopEnd = player.noteSequence.totalTime || 0;
+    }
+    Tone.Transport.setLoopPoints(0, loopEnd);
+    Tone.Transport.loop = loopCb.checked;
+  });
+
+  // Clean up on pause/stop
+  player.addEventListener('pause', () => { Tone.Transport.loop = false; });
+  player.addEventListener('stop',  () => {
+    Tone.Transport.loop = false;
+    // put the transport back at the start so next Play begins at 0
+    Tone.Transport.seconds = 0;
+  });
+</script>
+
+<script>
+  const player = document.getElementById('player');
+  const kb = document.getElementById('kb');
+
+  // Adjust to match what you want visible on the keyboard
+  const LOWEST_PITCH = 60; // C4
+  const OCTAVES = parseInt(kb.getAttribute('octaves')) || 2;
+  const TOTAL_KEYS = 12 * OCTAVES;
+
+  const toIndex = (pitch) => pitch - LOWEST_PITCH;
+
+  // Build a compact note list when MIDI loads
+  let notes = [];
+  player.addEventListener('load', () => {
+    notes = (player.noteSequence?.notes || []).map(n => ({
+      p: n.pitch,
+      s: n.startTime,
+      e: n.endTime
+    }));
+  });
+
+  // RAF-based lighting (loop-proof)
+  let rafId = null;
+  let prevIdx = new Set();
+
+  function stopLights() {
+    if (rafId) cancelAnimationFrame(rafId);
+    rafId = null;
+    // turn everything off
+    kb.keysDim(Array.from({length: TOTAL_KEYS}, (_, i) => i));
+    prevIdx.clear();
+  }
+
+  function startLights() {
+    stopLights();
+    if (!notes.length) return;
+
+    const tick = () => {
+      const t = (typeof player.currentTime === 'number')
+        ? player.currentTime
+        : (window.Tone?.Transport?.seconds || 0);
+
+      // Which pitches are active at time t?
+      const activeIdx = new Set();
+      for (const n of notes) {
+        if (t >= n.s && t < n.e) {
+          const idx = toIndex(n.p);
+          if (idx >= 0 && idx < TOTAL_KEYS) activeIdx.add(idx);
+        }
+      }
+
+      // Diff vs previous frame to minimize updates
+      const toLight = [];
+      const toDim = [];
+
+      for (const idx of activeIdx) {
+        if (!prevIdx.has(idx)) toLight.push(idx);
+      }
+      for (const idx of prevIdx) {
+        if (!activeIdx.has(idx)) toDim.push(idx);
+      }
+
+      if (toLight.length) kb.keysLight(toLight);
+      if (toDim.length)   kb.keysDim(toDim);
+
+      prevIdx = activeIdx;
+      rafId = requestAnimationFrame(tick);
+    };
+
+    rafId = requestAnimationFrame(tick);
+  }
+
+  // Wire lifecycle
+  player.addEventListener('play',  startLights);
+  player.addEventListener('pause', stopLights);
+  player.addEventListener('stop',  stopLights);
+  // If you switch files dynamically, re-arm after load if already playing
+  player.addEventListener('load',  () => {
+    if (window.Tone?.Transport?.state === 'started') startLights();
+  });
+</script>
+
+
+
+
+</body>
+</html>

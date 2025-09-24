@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <title>Excerpt – Tempo + Loop</title>
+
+  <script src="https://cdn.jsdelivr.net/combine/npm/tone@14.7.58,npm/@magenta/music@1.23.1/es6/core.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html-midi-player/1.6.0/midi-player.min.js"></script>
+
+  <style>
+    body{font-family:system-ui,Arial,sans-serif;padding:24px;background:#f5f7fb}
+    midi-player{display:block;margin:10px 0}
+    midi-visualizer{width:100%;height:220px;display:block;border:1px solid #ccc;border-radius:8px;background:#fff}
+    .controls{display:flex;gap:14px;align-items:center;margin:8px 0}
+    input[type="range"]{width:220px}
+    button{padding:8px 12px}
+  </style>
+</head>
+<body>
+  <h1>🎹 Tempo + Loop</h1>
+
+  <div class="controls">
+    <button id="unlock">Audio starten</button>
+    <label><strong>Tempo:</strong> <span id="bpmVal">100</span> BPM</label>
+    <input id="bpm" type="range" min="50" max="160" step="1" value="100">
+    <label><input id="loop" type="checkbox"> Ganze Passage wiederholen</label>
+  </div>
+
+  <!-- No sound-font; visualizer slotted inside -->
+  <midi-player id="player" src="excerpt1.mid" controls>
+    <midi-visualizer slot="visualizer" type="piano-roll"></midi-visualizer>
+  </midi-player>
+
+  <script>
+    // Unlock audio (Chrome autoplay)
+    document.getElementById('unlock').addEventListener('click', ()=>{
+      if (window.Tone && Tone.context.state !== 'running') Tone.context.resume();
+    }, { once:true });
+
+    // Tempo
+    const bpm = document.getElementById('bpm');
+    const bpmVal = document.getElementById('bpmVal');
+    const setBPM = v => { if (window.Tone) Tone.Transport.bpm.value = Number(v); };
+    bpm.addEventListener('input', e => { bpmVal.textContent = e.target.value; setBPM(e.target.value); });
+    setBPM(bpm.value);
+</script>
+<script>
+  const player = document.getElementById('player');
+  const loopCb = document.getElementById('loop');
+
+  let loopEnd = 0; // seconds
+
+  // Set loop points when the MIDI is loaded
+  player.addEventListener('load', () => {
+    loopEnd = (player.noteSequence?.totalTime || 0);
+    // prime Transport loop points to the piece length
+    Tone.Transport.setLoopPoints(0, loopEnd);
+    Tone.Transport.loop = loopCb.checked;
+  });
+
+  // Apply loop on play (covers the case where user ticks loop before pressing Play)
+  player.addEventListener('play', () => {
+    if (loopEnd <= 0 && player.noteSequence) {
+      loopEnd = player.noteSequence.totalTime || 0;
+    }
+    Tone.Transport.setLoopPoints(0, loopEnd);
+    Tone.Transport.loop = loopCb.checked;
+  });
+
+  // If the user toggles the checkbox mid-playback
+  loopCb.addEventListener('change', () => {
+    if (loopEnd <= 0 && player.noteSequence) {
+      loopEnd = player.noteSequence.totalTime || 0;
+    }
+    Tone.Transport.setLoopPoints(0, loopEnd);
+    Tone.Transport.loop = loopCb.checked;
+  });
+
+  // Clean up on pause/stop
+  player.addEventListener('pause', () => { Tone.Transport.loop = false; });
+  player.addEventListener('stop',  () => {
+    Tone.Transport.loop = false;
+    // put the transport back at the start so next Play begins at 0
+    Tone.Transport.seconds = 0;
+  });
+</script>
+
+
+
+</body>
+</html>
