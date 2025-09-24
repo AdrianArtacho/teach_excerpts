@@ -1,0 +1,369 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>MIDI + Full-Width Score + Keyboard</title>
+
+<!-- Open-source libs -->
+<script src="https://unpkg.com/tone@14.8.49/build/Tone.js"></script>
+<script src="https://unpkg.com/@tonejs/midi@2.0.28/build/Midi.js"></script>
+<!-- Latest OSMD (works around ORB for you) -->
+<script src="https://cdn.jsdelivr.net/npm/opensheetmusicdisplay/build/opensheetmusicdisplay.min.js" defer></script>
+
+
+
+<style>
+  :root{--bg:#0b0e13;--panel:#141a22;--accent:#6dd3ff;--text:#e9eef5;--muted:#9fb3c8;--danger:#ff6b6b}
+  html,body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
+  /* Full-width layout */
+  .wrap{width:100%;margin:0; padding:12px 0 24px}
+  .band{display:grid;gap:14px}
+  .pane{background:#0b0f15;border:1px solid #1b2330;border-radius:14px;padding:12px}
+  h1{font-size:20px;margin:0 0 8px}
+  .subtitle{color:var(--muted);font-size:14px;margin-bottom:8px}
+  .controls{display:flex;flex-wrap:wrap;gap:10px;margin:6px 0 10px}
+  button,.toggle{background:#1c2430;color:var(--text);border:1px solid #273142;border-radius:10px;padding:10px 14px;cursor:pointer;font-weight:600}
+  button:hover,.toggle:hover{border-color:var(--accent)}
+  .toggle.active{outline:2px solid var(--accent)}
+  label{font-size:12px;color:var(--muted)}
+  input[type="range"],input[type="text"],input[type="number"]{background:#0f141b;color:var(--text);border:1px solid #273142;border-radius:8px}
+  input[type="range"]{width:180px}
+  input[type="text"],input[type="number"]{padding:8px 10px}
+  .row{display:flex;gap:16px;flex-wrap:wrap;align-items:center}
+  .small{font-size:12px;color:var(--muted)}
+  .warn{color:var(--danger)}
+  .file{color:var(--accent)}
+  /* Score pane: truly full width of page/iframe */
+  #scorePane{padding:0;background:transparent;border:none}
+  #scoreWrap{background:#fff;border-radius:8px;padding:16px 8px}
+  #score{width:100%;overflow:auto}
+  /* Make OSMD SVG stretch to container width for legibility */
+  #score svg{width:100% !important;height:auto !important;display:block}
+  /* Keyboard canvas below score, full width */
+  #piano{width:100%;height:auto;display:block}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="band">
+    <div class="pane">
+      <h1>MIDI + Full-Width Score</h1>
+      <div class="subtitle">Audio from <span class="file">excerpt1.mid</span>; score from <span class="file">excerpt1.musicxml</span>. Keyboard lights below.</div>
+      <div class="controls">
+        <button id="start" class="toggle active">Start Audio & Load</button>
+        <button id="play"  disabled>Play</button>
+        <button id="pause" disabled>Pause</button>
+        <button id="stop"  disabled>Stop</button>
+        <button id="rew"   disabled>⟲ Rewind</button>
+        <button id="loop"  class="toggle active" disabled>Loop: On</button>
+        <button id="fit"   disabled>Fit score to width</button>
+      </div>
+      <div class="row">
+        <div>
+          <label for="tempo">Tempo (%)</label><br/>
+          <input id="tempo" type="range" min="50" max="150" step="1" value="100"/>&nbsp;
+          <span id="tempoVal" class="small">100%</span>
+        </div>
+        <div>
+          <label for="vol">Volume (dB)</label><br/>
+          <input id="vol" type="range" min="-36" max="0" step="1" value="-6"/>&nbsp;
+          <span id="volVal" class="small">-6 dB</span>
+        </div>
+        <div>
+          <label for="rewTo">Rewind to (s)</label><br/>
+          <input id="rewTo" type="number" min="0" step="0.1" value="0" style="width:90px"/>
+        </div>
+        <div>
+          <label for="zoom">Score zoom</label><br/>
+          <input id="zoom" type="range" min="40" max="160" step="5" value="100"/>&nbsp;
+          <span id="zoomVal" class="small">100%</span>
+        </div>
+        <div>
+          <label>Cursor</label><br/>
+          <button id="cursorToggle">Hide cursor</button>
+        </div>
+      </div>
+      <div id="status" class="small" style="margin-top:8px">Ready. Click <b>Start Audio & Load</b>.</div>
+      <div id="error" class="small warn" style="margin-top:4px;display:none"></div>
+    </div>
+
+    <!-- Full-width score -->
+    <div id="scorePane" class="pane">
+      <div id="scoreWrap">
+        <div id="score"></div>
+      </div>
+    </div>
+
+    <!-- Keyboard (below the score) -->
+    <div class="pane">
+      <div class="row" style="gap:16px;margin-bottom:8px;padding:10px;border:1px dashed #273142;border-radius:12px">
+        <div>
+          <label for="lowNote">Keyboard range — Low (note or MIDI)</label><br/>
+          <input id="lowNote" type="text" value="A0" style="width:110px"/>
+        </div>
+        <div>
+          <label for="highNote">Keyboard range — High (note or MIDI)</label><br/>
+          <input id="highNote" type="text" value="C8" style="width:110px"/>
+        </div>
+        <div style="display:flex;gap:8px;align-items:end">
+          <button id="applyRange">Apply</button>
+          <button id="fitRange">Fit to MIDI</button>
+        </div>
+        <div class="small">Examples: <code>C3</code>, <code>F#5</code>, <code>60</code>, <code>84</code> (valid 21–108).</div>
+      </div>
+      <canvas id="piano" width="2000" height="260" aria-label="Piano keyboard visualization"></canvas>
+    </div>
+  </div>
+</div>
+
+<script>
+
+const { Fraction } = opensheetmusicdisplay;
+
+// Convert seconds -> OSMD Fraction (global timestamp in *whole notes*).
+function secToOsmdFraction(sec, midiHeader){
+  // Use MIDI's tempo map for accuracy (handles rit./accel. in the file)
+  const ticks = midiHeader.secondsToTicks(sec);          // absolute ticks at 'sec'
+  const quarters = ticks / midiHeader.ppq;               // quarter notes from start
+  const wholes = quarters / 4;                           // whole notes from start
+  // Use a high denominator to minimize rounding issues:
+  const denom = 1024;
+  return new Fraction(Math.round(wholes * denom), denom);
+}
+
+(async function(){
+  const $=id=>document.getElementById(id);
+  const btnStart=$('start'), btnPlay=$('play'), btnPause=$('pause'), btnStop=$('stop'),
+        btnRew=$('rew'), btnLoop=$('loop'), btnFit=$('fit');
+  const tempo=$('tempo'), tempoVal=$('tempoVal'), vol=$('vol'), volVal=$('volVal'),
+        rewTo=$('rewTo'), zoom=$('zoom'), zoomVal=$('zoomVal'), cursorToggle=$('cursorToggle');
+  const lowNote=$('lowNote'), highNote=$('highNote'), applyRangeBtn=$('applyRange'), fitRangeBtn=$('fitRange');
+  const statusEl=$('status'), errEl=$('error');
+  const scoreDiv=$('score'), piano=$('piano'), ctx=piano.getContext('2d');
+
+  // State
+  const ABS_MIN=21, ABS_MAX=108;
+  let displayFirst=ABS_MIN, displayLast=ABS_MAX;
+  let midi, part, synth, baseBpm=120, durationSec=0, loopEnabled=true;
+  let osmd, cursorVisible=true, onsetTimesSec=[], scheduleCursor;
+
+  const setStatus=s=>statusEl.textContent=s;
+  const setError =s=>{ errEl.textContent=s; errEl.style.display = s ? 'block' : 'none'; };
+
+  // -------- Keyboard drawing
+  const activeNotes=new Set();
+  const isBlack = n => [1,3,6,8,10].includes(n%12);
+  function drawKeyboard(){
+    const W=piano.width, H=piano.height;
+    ctx.clearRect(0,0,W,H);
+    const keys=[]; for(let m=displayFirst;m<=displayLast;m++) keys.push(m);
+    const whites=keys.filter(k=>!isBlack(k)).length;
+    const whiteW=W/whites, whiteH=H;
+    const whiteX=new Map(); let xw=0;
+    for(let m=displayFirst;m<=displayLast;m++){
+      if(!isBlack(m)){
+        whiteX.set(m,xw);
+        ctx.fillStyle=activeNotes.has(m)?"#cdefff":"#f7f9fc";
+        ctx.fillRect(xw,0,whiteW,whiteH);
+        ctx.strokeStyle="#c8d6e5"; ctx.lineWidth=1; ctx.strokeRect(xw,0,whiteW,whiteH);
+        xw+=whiteW;
+      }
+    }
+    const blackW=whiteW*0.62, blackH=whiteH*0.62;
+    for(let m=displayFirst;m<=displayLast;m++){
+      if(isBlack(m)){
+        let prev=m-1; while(prev>=displayFirst&&isBlack(prev)) prev--;
+        let next=m+1; while(next<=displayLast&&isBlack(next)) next++;
+        if(!whiteX.has(prev)||!whiteX.has(next)) continue;
+        const xPrev=whiteX.get(prev), xNext=whiteX.get(next);
+        const center=(xPrev+xNext+whiteW)/2, x=center-blackW/2;
+        ctx.fillStyle=activeNotes.has(m)?"#74c0fc":"#1d232b";
+        ctx.fillRect(x,0,blackW,blackH);
+        ctx.strokeStyle="#0f141b"; ctx.strokeRect(x,0,blackW,blackH);
+      }
+    }
+  }
+  function noteOn(m){ if(m<displayFirst||m>displayLast) return; activeNotes.add(m); Tone.Draw.schedule(()=>drawKeyboard(), Tone.now()); }
+  function noteOff(m){ if(activeNotes.delete(m)) Tone.Draw.schedule(()=>drawKeyboard(), Tone.now()); }
+
+  // DPI crispness for canvas
+  function resizeCanvasForDPR(){
+    const dpr=Math.max(1, Math.floor(window.devicePixelRatio||1));
+    const cssW=piano.clientWidth, cssH=piano.clientHeight||260;
+    piano.width=Math.round(cssW*dpr); piano.height=Math.round(cssH*dpr);
+    ctx.setTransform(dpr,0,0,dpr,0,0); drawKeyboard();
+  }
+  new ResizeObserver(resizeCanvasForDPR).observe(piano);
+
+  // -------- Score (OSMD)
+  async function loadScore(){
+    osmd = new opensheetmusicdisplay.OpenSheetMusicDisplay(scoreDiv, {
+      autoResize: true,
+      backend: "svg",
+      drawTitle: false
+    });
+    await osmd.load("./excerpt1.musicxml");
+    osmd.setOptions({ zoom: Number(zoom.value)/100 });
+    await osmd.render();
+    osmd.cursor.show(); cursorVisible=true; cursorToggle.textContent="Hide cursor";
+  }
+  function fitScoreToWidth(){
+    // SVG already scales to 100% via CSS. This nudge re-renders if needed.
+    if(!osmd) return;
+    osmd.setOptions({ zoom: Number(zoom.value)/100 });
+    osmd.render();
+  }
+
+  // -------- MIDI + audio
+  async function loadMidi(){
+    midi = await Midi.fromUrl("./excerpt1.mid");
+    baseBpm = midi.header.tempos?.[0]?.bpm || 120;
+    durationSec = midi.duration || 0;
+    Tone.Transport.bpm.value = baseBpm;
+
+    if (synth) synth.dispose();
+    synth = new Tone.PolySynth(Tone.Synth, {
+      oscillator:{type:"triangle"},
+      envelope:{attack:0.005, decay:0.2, sustain:0.2, release:0.8}
+    }).toDestination();
+
+    if (part) { part.dispose(); part=null; }
+
+    const events=[];
+    midi.tracks.forEach(t => t.notes.forEach(n => {
+      events.push({ time:n.time, midi:n.midi, duration:n.duration, velocity:n.velocity });
+    }));
+    events.sort((a,b)=>a.time-b.time);
+
+    // Onset times for score cursor
+    onsetTimesSec = Array.from(new Set(events.map(e=>Number(e.time).toFixed(4)))).map(Number);
+
+    part = new Tone.Part((time, ev) => {
+      const f = Tone.Frequency(ev.midi, "midi");
+      synth.triggerAttackRelease(f, ev.duration, time, ev.velocity);
+      Tone.Draw.schedule(()=>noteOn(ev.midi), time);
+      Tone.Draw.schedule(()=>noteOff(ev.midi), time + ev.duration);
+    }, events).start(0);
+
+  function scheduleCursorToOnsets(onsetTimesSec){
+    // Clear any old schedules by restarting the Part before (re)play; Tone handles loop repeats.
+    // Position the OSMD cursor *by absolute timestamp* at each onset:
+    onsetTimesSec.forEach((t) => {
+      Tone.Transport.schedule(() => {
+        try {
+          const frac = secToOsmdFraction(t, midi.header);
+          osmd.cursor.iterator.moveToTimestamp(frac);
+          osmd.cursor.update();            // redraw cursor in new spot
+          osmd.cursor.cursorElement?.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" });
+        } catch(e) { /* ignore if past end */ }
+      }, t);
+    });
+  }
+
+
+    Tone.Transport.loop = true;
+    Tone.Transport.loopStart = 0;
+    Tone.Transport.loopEnd = durationSec + 0.01;
+  }
+
+  // -------- Helpers
+  function parseNoteOrMidi(v){
+    const s=String(v).trim(); if(s==="") return null;
+    if(/^\d+$/.test(s)) return Number(s);
+    try{ return Tone.Frequency(s).toMidi(); }catch{ return null; }
+  }
+  function clampRange(lo,hi){ let a=Math.max(ABS_MIN,Math.min(ABS_MAX,lo)), b=Math.max(ABS_MIN,Math.min(ABS_MAX,hi)); if(a>b)[a,b]=[b,a]; return [a,b]; }
+  function applyRange(){
+    const lo=parseNoteOrMidi(lowNote.value), hi=parseNoteOrMidi(highNote.value);
+    if(lo==null||hi==null) { setError("Invalid range. Use C3/F#5 or 21–108."); return; }
+    const [a,b]=clampRange(lo,hi); displayFirst=a; displayLast=b; setError(""); activeNotes.clear(); drawKeyboard();
+  }
+
+  // -------- UI wiring
+  btnStart.addEventListener('click', async ()=>{
+    try{
+      await Tone.start();
+      btnStart.disabled=true; setStatus("Loading files…");
+      await loadScore();
+      await loadMidi();
+      drawKeyboard();
+      [btnPlay,btnPause,btnStop,btnRew,btnLoop,btnFit].forEach(b=>b.disabled=false);
+      setStatus(`Loaded. Duration ${durationSec.toFixed(2)} s — Base tempo ${baseBpm} BPM.`);
+      fitScoreToWidth();
+    }catch(e){ console.error(e); setError("Init failed. Ensure both files are present and served over HTTP(S)."); }
+  });
+
+  btnPlay.addEventListener('click', async ()=>{
+    if (!part || !osmd) return;
+    osmd.cursor.reset();
+    // Build unique onset list (you already have this; keep your version)
+    const onsetTimesSec = Array.from(new Set(
+      part._events.map(e => Number(e.time.toFixed ? e.time.toFixed(4) : e.time)).sort((a,b)=>a-b)
+    )).map(Number);
+    scheduleCursorToOnsets(onsetTimesSec);
+    await Tone.Transport.start("+0.01");
+    setStatus("Playing…");
+  });
+
+  btnPause.addEventListener('click', async ()=>{ await Tone.Transport.pause(); setStatus("Paused."); });
+  btnStop .addEventListener('click', async ()=>{
+    await Tone.Transport.stop(); activeNotes.clear(); drawKeyboard();
+    osmd?.cursor.reset(); setStatus("Stopped.");
+  });
+  btnRew  .addEventListener('click', ()=>{
+    const t=Math.max(0, Number(rewTo.value)||0);
+    Tone.Transport.seconds=Math.min(t, durationSec);
+    setStatus(`Rewound to ${Tone.Transport.seconds.toFixed(2)} s.`);
+  });
+  btnLoop .addEventListener('click', ()=>{
+    loopEnabled=!loopEnabled; Tone.Transport.loop=loopEnabled;
+    btnLoop.classList.toggle("active", loopEnabled);
+    btnLoop.textContent=`Loop: ${loopEnabled ? "On" : "Off"}`;
+  });
+
+  tempo.addEventListener('input', ()=>{
+    const pct=Number(tempo.value); tempoVal.textContent=pct+"%";
+    Tone.Transport.bpm.value=Math.max(30, Math.min(300, baseBpm*(pct/100)));
+  });
+  vol.addEventListener('input', ()=>{
+    const dB=Number(vol.value); volVal.textContent=dB+" dB"; Tone.Destination.volume.value=dB;
+  });
+
+  zoom.addEventListener('input', async ()=>{
+    zoomVal.textContent=zoom.value+"%";
+    if(osmd){ osmd.setOptions({zoom: Number(zoom.value)/100}); await osmd.render(); if(cursorVisible) osmd.cursor.show(); }
+  });
+  btnFit.addEventListener('click', fitScoreToWidth);
+
+  cursorToggle.addEventListener('click', ()=>{
+    if(!osmd) return;
+    cursorVisible=!cursorVisible;
+    if(cursorVisible){ osmd.cursor.show(); cursorToggle.textContent="Hide cursor"; }
+    else { osmd.cursor.hide(); cursorToggle.textContent="Show cursor"; }
+  });
+
+  applyRangeBtn.addEventListener('click', applyRange);
+  fitRangeBtn.addEventListener('click', ()=>{
+    if(!midi) return;
+    let lo=Infinity, hi=-Infinity;
+    midi.tracks.forEach(t=>t.notes.forEach(n=>{ if(n.midi<lo) lo=n.midi; if(n.midi>hi) hi=n.midi; }));
+    if(isFinite(lo)&&isFinite(hi)){
+      const [a,b]=clampRange(lo,hi); displayFirst=a; displayLast=b;
+      lowNote.value=a.toString(); highNote.value=b.toString();
+      activeNotes.clear(); drawKeyboard();
+    }
+  });
+
+  // Resize handling
+  window.addEventListener('resize', ()=>{
+    // SVG already scales to 100% width; re-render if you want zoom recalculated
+    fitScoreToWidth();
+  });
+
+  document.addEventListener('visibilitychange', ()=>{ if(document.hidden){ activeNotes.clear(); drawKeyboard(); } });
+
+})();
+</script>
+</body>
+</html>
