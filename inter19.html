@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <title>MIDI Player – Baseline OK</title>
+  <!-- Single self-contained build (bundled): -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html-midi-player/1.6.0/midi-player.min.js"></script>
+  <style>
+    body { font-family: system-ui, Arial, sans-serif; padding: 24px; }
+    midi-player { display:block; margin: 10px 0; }
+  </style>
+</head>
+<body>
+  <h1>✅ Baseline</h1>
+
+  <!-- No visualizer yet; no sound-font -->
+  <midi-player src="excerpt1.mid" controls></midi-player>
+
+  <!-- Optional: click once if your browser requires a gesture -->
+  <button onclick="window.Tone && Tone.context.state!=='running' && Tone.context.resume()">Audio starten</button>
+</body>
+</html>

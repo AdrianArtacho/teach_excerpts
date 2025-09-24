@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <title>MIDI Player — Fixed Baseline</title>
+
+  <!-- 1) Load Tone + Magenta (Magenta provides urlToNoteSequence) -->
+  <script src="https://cdn.jsdelivr.net/combine/npm/tone@14.7.58,npm/@magenta/music@1.23.1/es6/core.js"></script>
+
+  <!-- 2) Load the web component AFTER Magenta -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html-midi-player/1.6.0/midi-player.min.js"></script>
+
+  <style>
+    body { font-family: system-ui, Arial, sans-serif; padding: 24px; background:#f5f7fb }
+    midi-player { display:block; margin:12px 0 }
+    midi-visualizer { width:100%; height:220px; display:block; border:1px solid #ccc; border-radius:8px; background:#fff }
+    button { padding:8px 12px; }
+  </style>
+</head>
+<body>
+  <h1>✅ Player + Piano Roll (Magenta loaded)</h1>
+
+  <button id="unlock">Audio starten</button>
+
+  <!-- No sound-font attribute => built-in synth -->
+  <!-- Visualizer is slotted INSIDE the player -->
+  <midi-player id="player" src="https://cdn.jsdelivr.net/gh/cifkao/html-midi-player@2b12128/twinkle_twinkle.mid" controls>
+    <midi-visualizer slot="visualizer" type="piano-roll"></midi-visualizer>
+  </midi-player>
+
+  <script>
+    // unlock audio (Chrome autoplay policy)
+    document.getElementById('unlock').addEventListener('click', () => {
+      if (window.Tone && Tone.context.state !== 'running') Tone.context.resume();
+    }, { once:true });
+  </script>
+</body>
+</html>

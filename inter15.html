@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <title>MIDI Test</title>
+  <!-- Use jsDelivr or local file -->
+  <script src="https://cdn.jsdelivr.net/npm/html-midi-player@1.6.0/dist/html-midi-player.js"></script>
+  <style>
+    body { font-family: system-ui, Arial, sans-serif; padding: 24px; }
+    midi-visualizer { width:100%; height:220px; display:block; border:1px solid #ccc; border-radius:8px; background:#fff; margin:10px 0 16px; }
+    midi-player { display:block; margin:10px 0; }
+    button { padding:8px 12px; }
+  </style>
+</head>
+<body>
+  <h1>✅ Player + Piano Roll</h1>
+
+  <button id="unlock">Audio starten</button>
+
+  <!-- Visualizer INSIDE the player (no selector timing issues) -->
+  <!-- No sound-font attribute => built-in synth -->
+  <midi-player id="player"
+               src="excerpt1.mid"
+               controls>
+    <midi-visualizer slot="visualizer" type="piano-roll"></midi-visualizer>
+  </midi-player>
+
+  <script>
+    // unlock audio once (Chrome autoplay policy)
+    document.getElementById('unlock').addEventListener('click', () => {
+      if (window.Tone && Tone.context.state !== 'running') Tone.context.resume();
+    }, { once:true });
+  </script>
+</body>
+</html>
