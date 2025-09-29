@@ -1,29 +1,20 @@
-# README #
+# Interactive Excerpts
 
-This README would normally document whatever steps are necessary to get your application up and running.
+The idea is to show little music excerpts in ways the kids can practice at home.
 
-### What is this repository for? ###
+---
 
-* Quick summary
-* Version
-* [Learn Markdown](https://bitbucket.org/tutorials/markdowndemo)
+PYTHON
 
-### How do I get set up? ###
+```bash
+python3 -m http.server 5500
+```
 
-* Summary of set up
-* Configuration
-* Dependencies
-* Database configuration
-* How to run tests
-* Deployment instructions
+then open:
+http://localhost:5500/yourfile.html
 
-### Contribution guidelines ###
+NODE.JS
 
-* Writing tests
-* Code review
-* Other guidelines
-
-### Who do I talk to? ###
-
-* Repo owner or admin
-* Other community or team contact
+```
+npx serve .
+```
