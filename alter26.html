@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <title>Visualizer – Keyboard + MusicXML (scheduled audio + per-note lights)</title>
+
+  <!-- (Optional) Magenta MIDI helpers. OK if these fail; MusicXML path works without. -->
+  <script type="module">
+    try {
+      const core = await import('./core.js');
+      const midi = await import('./midi_io.js');
+      window.mm = { ...core, ...midi };
+    } catch (e) {
+      console.warn('Magenta modules not loaded (ok for MusicXML-only).', e);
+    }
+  </script>
+
+  <!-- Local copies -->
+  <script defer src="./opensheetmusicdisplay.min.js"></script>
+  <script defer src="./all-around-keyboard.min.js"></script>
+
+  <style>
+    :root { --c1:#2f6fab; --c2:#f5f7fb; --c3:#222; --c4:#d7dbe4; }
+    * { box-sizing:border-box }
+    body{font-family:system-ui,Arial,sans-serif;background:var(--c2);color:var(--c3);margin:0;padding:24px}
+    h1{margin:0 0 12px;color:var(--c1)}
+    .card{background:#fff;border:1px solid var(--c4);border-radius:12px;padding:16px;max-width:1000px;margin:0 auto}
+    .row{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:10px 0}
+    label{font-size:.95rem}
+    input[type="range"]{width:220px}
+    button{padding:8px 12px;border-radius:8px;border:1px solid var(--c4);background:#fff;cursor:pointer}
+    button:disabled{opacity:.6;cursor:not-allowed}
+    #roll{width:100%;height:200px;border:1px solid var(--c4);border-radius:10px;background:#fff;margin:10px 0}
+    all-around-keyboard{width:100%;height:170px;display:block;border:1px solid var(--c4);border-radius:10px}
+    #osmd{background:#fff;border:1px solid var(--c4);border-radius:10px;padding:10px;margin-top:16px;overflow:auto}
+    #status{font:12px/1.4 ui-monospace,monospace;background:#fff;border:1px solid #e0e4ee;border-radius:8px;padding:8px;white-space:pre-wrap;max-height:220px;overflow:auto}
+    .small{font-size:.9rem;color:#555}
+  </style>
+</head>
+<body>
+  <h1>🎹 Visualizer – Keyboard + Notation</h1>
+  <div class="card">
+    <div class="row">
+      <label><strong>MIDI laden:</strong> <input id="midiFile" type="file" accept=".mid,.midi"></label>
+      <label><strong>MusicXML laden:</strong> <input id="xmlFile" type="file" accept=".musicxml,.xml,.mxl"></label>
+    </div>
+
+    <div class="row">
+      <button id="play" disabled>Play</button>
+      <button id="stop" disabled>Stop</button>
+      <label><input id="loop" type="checkbox"> Loop</label>
+      <label><strong>Tempo:</strong> <span id="bpmVal">100</span> BPM</label>
+      <input id="bpm" type="range" min="40" max="200" step="1" value="100">
+      <button id="testTone">🔊 Test Tone</button>
+      <button id="panic">⏹ Panic</button>
+    </div>
+
+    <canvas id="roll"></canvas>
+    <all-around-keyboard id="kb" octaves="3" width="900" depth="120"></all-around-keyboard>
+
+    <div id="osmd"><p class="small">Lade eine MusicXML-Datei, um die Notenschrift zu sehen.</p></div>
+
+    <h3>Status</h3>
+    <div id="status"></div>
+  </div>
+
+  <script>
+  const log = (...a)=>{ const el=document.getElementById('status'); el.textContent += a.join(' ') + '\n'; el.scrollTop=el.scrollHeight; };
+
+  document.addEventListener('DOMContentLoaded', async () => {
+    const baseBPM = 100;
+
+    const midiInput = document.getElementById('midiFile');
+    const xmlInput  = document.getElementById('xmlFile');
+    const playBtn   = document.getElementById('play');
+    const stopBtn   = document.getElementById('stop');
+    const testBtn   = document.getElementById('testTone');
+    const panicBtn  = document.getElementById('panic');
+    const loopCb    = document.getElementById('loop');
+    const bpm       = document.getElementById('bpm');
+    const bpmVal    = document.getElementById('bpmVal');
+    const kb        = document.getElementById('kb');
+    const rollCv    = document.getElementById('roll');
+    const ctx       = rollCv.getContext('2d');
+
+    if (window.customElements?.whenDefined) {
+      try { await customElements.whenDefined('all-around-keyboard'); } catch {}
+    }
+
+    // Keyboard window (auto-fitted later)
+    let LOWEST_PITCH = 60; // C4
+    let TOTAL_KEYS   = 12 * (parseInt(kb.getAttribute('octaves')) || 3);
+    const toIdx = p => p - LOWEST_PITCH;
+
+    // Component layout: index 0 == MIDI 24 (C1)
+    const MIDI_BASE_FOR_LAYOUT = 24;
+    const getLeftmostIndex = () => Number(kb.getAttribute('leftmostKey') || 48);
+    const setLeftmostIndex = (idx) => kb.setAttribute('leftmostKey', String(idx));
+    const indexFromMidi = (midi) => {
+      // map to our visible window indices (leftmostIndex + offset)
+      const L = getLeftmostIndex();
+      return L + (midi - LOWEST_PITCH);
+    };
+
+    // Playback & data
+    let notes = [];   // {p,s,e} in "score seconds" at baseBPM
+    let total = 0;
+    let playing=false, startedAt=0, t0=0, rafId=null;
+
+    // Scheduled audio & lighting
+    let scheduled = [];      // scheduled audio nodes
+    let loopTimer = null;
+    let lightTimers = [];    // ON/OFF timeouts per note
+
+    // ---------- Audio (gesture-safe; the working path) ----------
+    const audio = { ctx:null, master:null, voices:new Map() }; // voices for manual key presses
+    function audioInit(){
+      if (audio.ctx) return;
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      audio.ctx = new Ctx();
+      audio.master = audio.ctx.createGain();
+      audio.master.gain.value = 0.15;
+      audio.master.connect(audio.ctx.destination);
+      log('🔊 AudioContext created. state=' + audio.ctx.state);
+    }
+    const midiToFreq = m => 440 * Math.pow(2,(m-69)/12);
+    function mkVoice(freq, vel=0.25){
+      const osc = audio.ctx.createOscillator();
+      const gain = audio.ctx.createGain();
+      osc.type = 'sawtooth';
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.0001, audio.ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(Math.max(0.001, vel), audio.ctx.currentTime + 0.01);
+      osc.connect(gain).connect(audio.master);
+      return {osc, gain};
+    }
+    function noteOn(midi, vel=0.8){
+      if (!audio.ctx) audioInit();
+      audio.ctx.resume?.();
+      if (audio.voices.has(midi)) return;
+      const v = mkVoice(midiToFreq(midi), vel);
+      v.osc.start();
+      audio.voices.set(midi, v);
+    }
+    function noteOff(midi){
+      if (!audio.ctx) return;
+      const v = audio.voices.get(midi);
+      if (!v) return;
+      const t = audio.ctx.currentTime;
+      v.gain.gain.cancelScheduledValues(t);
+      v.gain.gain.setTargetAtTime(0.0001, t, 0.03);
+      v.osc.stop(t + 0.08);
+      setTimeout(()=>audio.voices.delete(midi), 120);
+    }
+
+    // Test tone
+    testBtn.addEventListener('click', () => {
+      audioInit();
+      audio.ctx.resume?.().then(()=>{
+        log('Test resume state=' + audio.ctx.state);
+        const v = mkVoice(440, 0.2);
+        v.osc.start();
+        v.osc.stop(audio.ctx.currentTime + 0.3);
+      }).catch(e=>log('Test resume err: '+e));
+    });
+
+    // Panic – All Notes Off
+    function allNotesOff(){
+      for (const n of scheduled) { try { n.osc.stop(); } catch {} }
+      scheduled.length = 0;
+      for (const [m, v] of audio.voices) { try { v.osc.stop(); } catch {} }
+      audio.voices.clear();
+      // clear any lit keys
+      const L = getLeftmostIndex();
+      const allIdx = Array.from({length:TOTAL_KEYS},(_,i)=>L+i);
+      if (typeof kb.keysDim === 'function') kb.keysDim(allIdx);
+    }
+    panicBtn.addEventListener('click', ()=>{
+      clearLightingTimers();
+      allNotesOff();
+      log('⏹ Panic: all voices stopped, lights cleared.');
+    });
+
+    // ---------- Normalize keyboard events to MIDI (for manual play) ----------
+    function midiFromKbEvent(e) {
+      let m = e?.detail?.midi ?? e?.detail?.note ?? e?.detail;
+      if (typeof m === 'number' && Number.isFinite(m)) return Math.round(m);
+      const idx = e?.detail?.index ?? e?.detail?.keyIndex ?? e?.index;
+      if (typeof idx === 'number' && Number.isFinite(idx)) return Math.round(MIDI_BASE_FOR_LAYOUT + idx);
+      return null;
+    }
+    const isValidMidi = m => Number.isInteger(m) && m >= 0 && m <= 127;
+
+    // On-screen keyboard → sound
+    kb.addEventListener('noteon', e => { const m = midiFromKbEvent(e); if (isValidMidi(m)) noteOn(m, 0.7); });
+    kb.addEventListener('noteOff', e => { const m = midiFromKbEvent(e); if (isValidMidi(m)) noteOff(m); });
+    kb.addEventListener('noteoff', e => { const m = midiFromKbEvent(e); if (isValidMidi(m)) noteOff(m); });
+    kb.addEventListener('keypress', e => { const m = midiFromKbEvent(e); if (isValidMidi(m)) noteOn(m, 0.7); });
+    kb.addEventListener('keyrelease', e => { const m = midiFromKbEvent(e); if (isValidMidi(m)) noteOff(m); });
+
+    // ---------- Keyboard lighting helpers (incremental) ----------
+    function lightMidi(m){
+      const idx = indexFromMidi(m);
+      if (typeof kb.keysLight === 'function') kb.keysLight([idx]);
+    }
+    function dimMidi(m){
+      const idx = indexFromMidi(m);
+      if (typeof kb.keysDim === 'function') kb.keysDim([idx]);
+    }
+    function clearLightingTimers(){
+      for (const id of lightTimers) clearTimeout(id);
+      lightTimers.length = 0;
+      // ensure everything is dimmed in the visible range
+      const L = getLeftmostIndex();
+      const allIdx = Array.from({length:TOTAL_KEYS},(_,i)=>L+i);
+      if (typeof kb.keysDim === 'function') kb.keysDim(allIdx);
+    }
+
+    // ---------- Piano roll ----------
+    function drawRoll(){
+      const pad=6, W=rollCv.clientWidth, H=rollCv.clientHeight;
+      if (rollCv.width!==W||rollCv.height!==H){ rollCv.width=W; rollCv.height=H; }
+      ctx.clearRect(0,0,W,H); ctx.fillStyle='#f3f5fb'; ctx.fillRect(0,0,W,H);
+      if (!notes.length||total<=0) return;
+      const secToX=s=>pad+(W-2*pad)*(s/total), keyH=(H-2*pad)/TOTAL_KEYS;
+      ctx.fillStyle='#2f6fab';
+      for(const n of notes){
+        const i=toIdx(n.p); if(i<0||i>=TOTAL_KEYS) continue;
+        const x=secToX(n.s), w=Math.max(2,secToX(n.e)-secToX(n.s)), y=H-pad-(i+1)*keyH;
+        ctx.fillRect(x,y,w,keyH-1);
+      }
+    }
+    function drawPlayhead(t){
+      if(total<=0) return; const pad=6;
+      const x=pad+(rollCv.width-2*pad)*(Math.min(t,total)/total);
+      ctx.strokeStyle='#e74c3c'; ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,rollCv.height); ctx.stroke();
+    }
+
+    // ---------- Scheduling (sound + per-note lights) ----------
+    function clearScheduledAudio(){
+      if (!audio.ctx) return;
+      for (const n of scheduled) {
+        try {
+          const t = audio.ctx.currentTime;
+          n.gain.gain.cancelScheduledValues(t);
+          n.gain.gain.setTargetAtTime(0.0001, t, 0.02);
+          n.osc.stop(t + 0.05);
+        } catch {}
+      }
+      scheduled.length = 0;
+      if (loopTimer) { clearTimeout(loopTimer); loopTimer = null; }
+    }
+
+    function scheduleNotesAtTempo(){
+      const scale = baseBPM / Number(bpm.value);       // scoreSec -> realSec
+      const startBase = audio.ctx.currentTime + 0.03;  // slight lead-in
+
+      let count = 0;
+      for (const n of notes) {
+        const s = n.s * scale;
+        const d = (n.e - n.s) * scale;
+        if (d <= 0) continue;
+
+        // Audio
+        const v = mkVoice(midiToFreq(n.p), 0.22);
+        v.osc.start(startBase + s);
+        v.gain.gain.setValueAtTime(0.22, startBase + s + Math.max(0.01, d - 0.03));
+        v.gain.gain.setTargetAtTime(0.0001, startBase + s + Math.max(0.01, d - 0.03), 0.02);
+        v.osc.stop(startBase + s + d + 0.03);
+        scheduled.push({ ...v, offAt: startBase + s + d + 0.03 });
+
+        // Lights (incremental ON/OFF using component’s API)
+        const onDelaySec  = Math.max(0, (startBase + s)     - audio.ctx.currentTime);
+        const offDelaySec = Math.max(0, (startBase + s + d) - audio.ctx.currentTime);
+
+        lightTimers.push(setTimeout(() => { lightMidi(n.p); }, onDelaySec * 1000));
+        lightTimers.push(setTimeout(() => { dimMidi(n.p);   }, offDelaySec * 1000));
+
+        count++;
+      }
+      log(`🎼 Scheduled ${count} notes @ BPM ${bpm.value}`);
+
+      // Loop handling (re-schedule next pass)
+      const passDur = total * scale;
+      if (loopCb.checked) {
+        loopTimer = setTimeout(() => {
+          t0 = 0;
+          startedAt = performance.now()/1000;
+          clearScheduledAudio();
+          clearLightingTimers();
+          scheduleNotesAtTempo();
+        }, Math.max(0, (passDur + 0.05) * 1000));
+      }
+    }
+
+    // ---------- Transport ----------
+    const getBPM=()=>Number(bpm.value);
+    bpm.addEventListener('input',e=>{
+      bpmVal.textContent=e.target.value;
+      if (playing) { stop(); start(); } // re-sync schedules
+    });
+    bpmVal.textContent=bpm.value;
+
+    const nowTime=()=> !playing ? t0 : t0 + (performance.now()/1000 - startedAt) * (getBPM()/baseBPM);
+
+    function tick(){
+      const t=nowTime();
+      if(!loopCb.checked && total>0 && t>=total){
+        drawRoll(); drawPlayhead(total); playing=false; return;
+      }
+      if(loopCb.checked && total>0 && t>=total){
+        t0=0; startedAt=performance.now()/1000; // visuals wrap; audio/lighting re-schedule via timer
+      }
+      drawRoll();
+      drawPlayhead(Math.min(t,total));
+      rafId=requestAnimationFrame(tick);
+    }
+    function start(){
+      if(!notes.length||playing) { if(!notes.length) log('⚠️ Keine Noten geladen.'); return; }
+      audioInit(); audio.ctx.resume?.().then(()=>log('Play resume state=' + audio.ctx.state));
+      playing=true; startedAt=performance.now()/1000; t0=0;
+      clearScheduledAudio();
+      clearLightingTimers();
+      scheduleNotesAtTempo();      // sound + lights
+      rafId=requestAnimationFrame(tick);
+    }
+    function stop(){
+      playing=false; if(rafId) cancelAnimationFrame(rafId); rafId=null; t0=0;
+      clearScheduledAudio();
+      clearLightingTimers();
+      allNotesOff();
+      drawRoll();
+    }
+
+    // ---------- MIDI (optional) ----------
+    async function parseMidi(file){
+      if(!window.mm) throw new Error('Magenta (mm) nicht geladen.');
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const fn = mm?.midiToNoteSequence || mm?.midiToSequenceProto;
+      if(typeof fn!=='function') throw new Error('Kein MIDI-Parser exportiert.');
+      return await Promise.resolve(fn(bytes));
+    }
+    async function loadMidi(file){
+      try{
+        const ns = await parseMidi(file);
+        notes = (ns.notes||[]).map(n=>({p:n.pitch,s:n.startTime,e:n.endTime})).sort((a,b)=>a.s-b.s);
+        total = ns.totalTime || (notes.length?Math.max(...notes.map(n=>n.e)):0);
+        autoFitKeyboard(notes);
+        t0=0; drawRoll();
+        playBtn.disabled = stopBtn.disabled = notes.length===0;
+        log('MIDI geladen:', file.name, `| Noten: ${notes.length} | Dauer: ${total.toFixed(2)}s`);
+      }catch(err){
+        console.error(err); log('MIDI-Fehler:', err?.message||err);
+        alert('MIDI konnte nicht geladen werden. Probier MusicXML.\n\nDetails: '+(err?.message||err));
+      }
+    }
+
+    // ---------- MusicXML rendering with OSMD ----------
+    let osmd=null;
+    async function renderXMLinOSMD(file){
+      if(!window.opensheetmusicdisplay) throw new Error('OSMD Script nicht geladen.');
+      if(!osmd) osmd=new opensheetmusicdisplay.OpenSheetMusicDisplay('osmd',{drawingParameters:'compact'});
+      const ext=file.name.toLowerCase().split('.').pop();
+      if(ext==='mxl'){ await osmd.load(await file.arrayBuffer()); }
+      else { await osmd.load(await file.text()); }
+      await osmd.render();
+      log('MusicXML gerendert.');
+    }
+
+    // ---------- Auto-fit keyboard ----------
+    function autoFitKeyboard(noteArray){
+      if (!noteArray.length) return;
+      const low = noteArray.reduce((m, n) => Math.min(m, n.p), 128);
+      const high = noteArray.reduce((m, n) => Math.max(m, n.p), 0);
+      const fitLowest = Math.floor(low / 12) * 12;
+      const neededKeys = (high - fitLowest + 1);
+      const neededOcts = Math.max(1, Math.ceil(neededKeys / 12));
+      LOWEST_PITCH = fitLowest;
+      TOTAL_KEYS = neededOcts * 12;
+      kb.setAttribute('octaves', String(neededOcts));
+      // align component layout index to our LOWEST_PITCH
+      const leftmostIndex = LOWEST_PITCH - MIDI_BASE_FOR_LAYOUT; // e.g. 60 -> 36
+      setLeftmostIndex(leftmostIndex);
+      log(`🔧 Fenster angepasst: MIDI ${LOWEST_PITCH}..${LOWEST_PITCH + TOTAL_KEYS - 1} | Oktaven: ${neededOcts} | leftmostKey(index)=${leftmostIndex}`);
+    }
+
+    // ---------- Robust MusicXML parser (DOM) ----------
+    async function extractNotesFromXMLraw(file) {
+      const text = await file.text();
+      const xml = new DOMParser().parseFromString(text, "application/xml");
+
+      const stepToSemitone = {C:0,D:2,E:4,F:5,G:7,A:9,B:11};
+      const secPerQuarterAtBase = 60 / baseBPM;
+
+      const parts = Array.from(xml.querySelectorAll("score-partwise > part, part"));
+      const collected = [];
+
+      for (const part of parts) {
+        const voiceTimes = new Map(); // voiceId -> seconds
+        const tieOpen = new Map(); // "voice|pitch" -> noteIndex
+
+        let divisions = Number(part.querySelector("attributes > divisions")?.textContent || xml.querySelector("divisions")?.textContent || 1);
+        const measures = Array.from(part.querySelectorAll(":scope > measure"));
+
+        for (const m of measures) {
+          const dHere = m.querySelector("attributes > divisions");
+          if (dHere) divisions = Number(dHere.textContent) || divisions;
+
+          const events = Array.from(m.querySelectorAll(":scope > note, :scope > backup, :scope > forward"));
+          for (const ev of events) {
+            if (ev.tagName === "backup") {
+              const durQ = Number(ev.querySelector("duration")?.textContent || 0) / divisions;
+              const durSec = durQ * secPerQuarterAtBase;
+              for (const [v,t] of voiceTimes.entries()) voiceTimes.set(v, Math.max(0, t - durSec));
+              continue;
+            }
+            if (ev.tagName === "forward") {
+              const durQ = Number(ev.querySelector("duration")?.textContent || 0) / divisions;
+              const durSec = durQ * secPerQuarterAtBase;
+              for (const [v,t] of voiceTimes.entries()) voiceTimes.set(v, t + durSec);
+              continue;
+            }
+
+            const isRest = ev.querySelector("rest") !== null;
+            const isChordFollower = ev.querySelector("chord") !== null;
+            const voiceId = ev.querySelector("voice")?.textContent?.trim() || "1";
+            const curTime = voiceTimes.get(voiceId) ?? 0;
+
+            let durDivs = ev.querySelector("duration") ? Number(ev.querySelector("duration").textContent) : NaN;
+            if (!Number.isFinite(durDivs) && isChordFollower) durDivs = 0;
+            const durQ = (durDivs / divisions) || 0;
+            const durSec = durQ * secPerQuarterAtBase;
+
+            if (!isRest) {
+              const step = ev.querySelector("step")?.textContent;
+              const alter = Number(ev.querySelector("alter")?.textContent || 0);
+              const octave = Number(ev.querySelector("octave")?.textContent);
+              if (step && Number.isFinite(octave)) {
+                const pitchMidi = 12 * (octave + 1) + stepToSemitone[step] + alter;
+                const startSec = curTime, endSec = startSec + durSec;
+
+                const tieTags = Array.from(ev.querySelectorAll("tie"));
+                const hasTieStart = tieTags.some(t => t.getAttribute("type") === "start");
+                const hasTieStop  = tieTags.some(t => t.getAttribute("type") === "stop");
+                const tieKey = voiceId + "|" + pitchMidi;
+
+                if (hasTieStop && tieOpen.has(tieKey)) {
+                  const idx = tieOpen.get(tieKey);
+                  if (idx != null && collected[idx]) {
+                    collected[idx].e = Math.max(collected[idx].e, endSec);
+                  }
+                }
+                if (!hasTieStop || hasTieStart) {
+                  if (endSec > startSec) {
+                    const newIdx = collected.push({ p: pitchMidi, s: startSec, e: endSec, _voice: voiceId }) - 1;
+                    if (hasTieStart) tieOpen.set(tieKey, newIdx); else tieOpen.delete(tieKey);
+                  }
+                }
+                if (hasTieStop && !hasTieStart) {
+                  tieOpen.delete(tieKey);
+                }
+              }
+            }
+
+            if (!isChordFollower) voiceTimes.set(voiceId, curTime + durSec);
+          }
+        }
+      }
+
+      notes = collected.filter(n => n.e > n.s).map(({p,s,e})=>({p,s,e})).sort((a,b)=>a.s-b.s);
+      total = notes.length ? Math.max(...notes.map(n=>n.e)) : 0;
+      t0 = 0;
+
+      if (!notes.length) {
+        log('⚠️ XML-Parser fand keine Noten. Enthält die Datei echte Noten (nicht nur Pausen/Layouts)?');
+      } else {
+        log(`XML-Parser: ${notes.length} Noten, Dauer: ${total.toFixed(2)}s`);
+        autoFitKeyboard(notes);
+      }
+    }
+
+    // ---------- Wiring ----------
+    midiInput.addEventListener('change', e => {
+      const f=e.target.files[0]; if(!f) return;
+      const ext=f.name.toLowerCase().split('.').pop();
+      if(ext==='mid'||ext==='midi') loadMidi(f);
+      else alert('Bitte eine MIDI-Datei (.mid/.midi) wählen.');
+    });
+
+    xmlInput.addEventListener('change', async e => {
+      const f=e.target.files[0]; if(!f) return;
+      const ext=f.name.toLowerCase().split('.').pop();
+      if(!['xml','musicxml','mxl'].includes(ext)) { alert('Bitte .xml/.musicxml/.mxl wählen.'); return; }
+      try {
+        await renderXMLinOSMD(f);
+        await extractNotesFromXMLraw(f);
+        const L = getLeftmostIndex();
+        if (typeof kb.keysDim === 'function') kb.keysDim(Array.from({length:TOTAL_KEYS},(_,i)=>L+i));
+        drawRoll();
+        playBtn.disabled = stopBtn.disabled = notes.length===0;
+        log('MusicXML geladen:', f.name, `| Noten: ${notes.length} | Dauer: ${total.toFixed(2)}s`);
+      } catch (err) {
+        console.error(err);
+        log('XML/OSMD Fehler:', err?.message||err);
+        alert('Konnte MusicXML nicht laden/analysieren.');
+      }
+    });
+
+    playBtn.addEventListener('click', start);
+    stopBtn.addEventListener('click', stop);
+
+    // Debug
+    setTimeout(()=>{
+      log('HTTP-Served?', location.protocol.startsWith('http') ? 'ja' : 'nein (bitte lokalen Server nutzen)');
+      log('Magenta geladen?', !!window.mm, '| midiToNoteSequence:', typeof window.mm?.midiToNoteSequence, '| midiToSequenceProto:', typeof window.mm?.midiToSequenceProto);
+    },0);
+  });
+  </script>
+</body>
+</html>

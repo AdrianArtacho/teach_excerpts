@@ -18,3 +18,13 @@ NODE.JS
 ```
 npx serve .
 ```
+
+---
+
+## Load piece with URL
+
+/your-page.html?xml=https://example.com/path/your-piece.musicxml&autoplay=1
+
+### Examples
+
+/alter31.html?xml=excerpt0.musicxml&autoplay=1
