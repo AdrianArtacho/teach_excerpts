@@ -43,6 +43,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     try { await customElements.whenDefined('all-around-keyboard'); } catch {}
   }
 
+    // --- Loop via URL flag ---
+    (function applyLoopFromURL(){
+    const params = new URLSearchParams(location.search);
+    const v = params.get('loop');
+    if (v !== null) {
+        const on = /^(1|true|yes|on)$/i.test(v);
+        loopCb.checked = on;
+        log('🔁 Loop via URL: ' + (on ? 'ON' : 'OFF'));
+    }
+    })();
+
   // ---------- Keyboard range / mapping ----------
   let LOWEST_PITCH = 60; // updates after fit or URL range
   let TOTAL_KEYS   = 12 * (parseInt(kb?.getAttribute('octaves')) || MIN_OCTAVES);
