@@ -1,0 +1,717 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <title>Visualizer – Roll ↑ | Score ↔ | Keyboard ↓ + MusicXML BPM</title>
+
+  <!-- (Optional) Magenta MIDI helpers -->
+  <script type="module">
+    try {
+      const core = await import('./core.js');
+      const midi = await import('./midi_io.js');
+      window.mm = { ...core, ...midi };
+    } catch (e) {
+      console.warn('Magenta modules not loaded (ok for MusicXML-only).', e);
+    }
+  </script>
+
+  <!-- Local copies -->
+  <script defer src="./opensheetmusicdisplay.min.js"></script>
+  <script defer src="./all-around-keyboard.min.js"></script>
+
+  <style>
+    :root { --c1:#2f6fab; --c2:#f5f7fb; --c3:#222; --c4:#d7dbe4; }
+    * { box-sizing:border-box }
+    body{font-family:system-ui,Arial,sans-serif;background:var(--c2);color:var(--c3);margin:0;padding:24px}
+    h1{margin:0 0 12px;color:var(--c1); display:flex; align-items:center; gap:.5ch; flex-wrap:wrap}
+    .card{background:#fff;border:1px solid var(--c4);border-radius:12px;padding:16px;max-width:1000px;margin:0 auto}
+    .row{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:10px 0}
+    label{font-size:.95rem}
+    input[type="range"]{width:220px}
+    button{padding:8px 12px;border-radius:8px;border:1px solid var(--c4);background:#fff;cursor:pointer}
+    button:disabled{opacity:.6;cursor:not-allowed}
+    #roll{width:100%;height:200px;border:1px solid var(--c4);border-radius:10px;background:#fff;margin:10px 0 14px}
+    #osmd{background:#fff;border:1px solid var(--c4);border-radius:10px;padding:10px;margin:12px 0;max-height:420px;overflow:auto}
+    /* More breathing room below the keyboard */
+    all-around-keyboard{width:100%;height:170px;display:block;border:1px solid var(--c4);border-radius:10px;margin:12px 0 36px}
+    #status{font:12px/1.4 ui-monospace,monospace;background:#fff;border:1px solid #e0e4ee;border-radius:8px;padding:8px;white-space:pre-wrap;max-height:300px;overflow:auto;margin-top:24px}
+    .small{font-size:.9rem;color:#555}
+    .file-inline { display:inline-flex; align-items:center; gap:.5ch; }
+  </style>
+</head>
+<body>
+  <!-- Title text is replaceable via ?title=... but the emoji stays -->
+  <h1 id="titleLine">🎹 <span id="titleText">Visualizer – Roll ↑ | Score ↔ | Keyboard ↓</span></h1>
+
+  <div class="card">
+    <!-- Controls (MusicXML picker inline here) -->
+    <div class="row">
+      <button id="play" disabled>Play</button>
+      <button id="stop" disabled>Stop</button>
+      <label><input id="loop" type="checkbox"> Loop</label>
+      <label><strong>Tempo:</strong> <span id="bpmVal">100</span> BPM</label>
+      <input id="bpm" type="range" min="30" max="240" step="1" value="100">
+      <button id="testTone">🔊 Test Tone</button>
+      <button id="panic">⏹ Panic</button>
+
+      <!-- MusicXML picker inline with controls -->
+      <label class="file-inline"><strong>MusicXML laden:</strong>
+        <input id="xmlFile" type="file" accept=".musicxml,.xml,.mxl">
+      </label>
+    </div>
+
+    <!-- ORDER: Roll (top) -->
+    <canvas id="roll"></canvas>
+
+    <!-- Score (middle) -->
+    <div id="osmd"><p class="small">Lade eine MusicXML-Datei, um die Notenschrift zu sehen.</p></div>
+
+    <!-- Keyboard (bottom) -->
+    <all-around-keyboard id="kb" octaves="2" width="900" depth="120"></all-around-keyboard>
+
+    <h3>Status</h3>
+    <div id="status"></div>
+  </div>
+
+<script>
+const log = (...a)=>{ const el=document.getElementById('status'); el.textContent += a.join(' ') + '\\n'; el.scrollTop=el.scrollHeight; };
+
+document.addEventListener('DOMContentLoaded', async () => {
+  // ---------- Title via URL (keeps the emoji) ----------
+  (function applyTitleFromURL(){
+    const params = new URLSearchParams(location.search);
+    const t = params.get('title');
+    if (!t) return;
+    document.getElementById('titleText').textContent = t;
+  })();
+
+  // ---------- Config ----------
+  let scoreBPM = 100;          // dynamically set from XML/MIDI
+  const MIN_OCTAVES = 2;       // cute default
+  const PAD_SEMITONES = 1;     // tiny margin so edge notes aren't clipped
+  const LOWEST_EMITTABLE_MIDI = 24; // all-around-keyboard emits MIDI = 24 + index
+
+  // ---------- UI ----------
+  const xmlInput  = document.getElementById('xmlFile');
+  const playBtn   = document.getElementById('play');
+  const stopBtn   = document.getElementById('stop');
+  const testBtn   = document.getElementById('testTone');
+  const panicBtn  = document.getElementById('panic');
+  const loopCb    = document.getElementById('loop');
+  const bpm       = document.getElementById('bpm');
+  const bpmVal    = document.getElementById('bpmVal');
+  const kb        = document.getElementById('kb');
+  const rollCv    = document.getElementById('roll');
+  const ctx       = rollCv.getContext('2d');
+
+  if (window.customElements?.whenDefined) {
+    try { await customElements.whenDefined('all-around-keyboard'); } catch {}
+  }
+
+  // ---------- Keyboard range / mapping ----------
+  let LOWEST_PITCH = 60; // updates after fit or URL range
+  let TOTAL_KEYS   = 12 * (parseInt(kb.getAttribute('octaves')) || MIN_OCTAVES);
+  const toIdx      = p => p - LOWEST_PITCH;
+
+  // Component layout: layout index 0 == MIDI 24 (C1)
+  const MIDI_BASE_FOR_LAYOUT = 24;
+  const getLeftmostIndex = () => Number(kb.getAttribute('leftmostKey') || 48);
+  const setLeftmostIndex = (idx) => kb.setAttribute('leftmostKey', String(Math.max(0, Math.round(idx))));
+  const indexFromMidi   = midi => getLeftmostIndex() + (midi - LOWEST_PITCH);
+
+  // ---------- State ----------
+  let notes   = [];   // {p,s,e} in "score seconds" (at scoreBPM reference)
+  let total   = 0;
+  let playing = false, startedAt=0, t0=0, rafId=null;
+  let scheduled = [], loopTimer=null, lightTimers=[];
+
+  // ---------- Range flags ----------
+  let userRangeOverride = null; // {low, high, strict}
+
+  const NOTE_INDEX = {c:0,'c#':1,'db':1,d:2,'d#':3,'eb':3,e:4,f:5,'f#':6,'gb':6,g:7,'g#':8,'ab':8,a:9,'a#':10,'bb':10,b:11};
+  function parseNoteNameToMidi(s){
+    if (!s) return null;
+    s = String(s).trim();
+    const m = s.match(/^([A-Ga-g])([#b]?)(-?\d+)$/);
+    if (!m) return null;
+    const name = (m[1]+m[2]).toLowerCase();
+    const oct = parseInt(m[3],10);
+    if (!(name in NOTE_INDEX)) return null;
+    return 12 * (oct + 1) + NOTE_INDEX[name];
+  }
+  function parseMidiOrNote(val){
+    if (val == null) return null;
+    if (/^-?\d+$/.test(String(val))) {
+      const n = Number(val);
+      return (n>=0 && n<=127) ? n : null;
+    }
+    return parseNoteNameToMidi(val);
+  }
+
+  // Apply a range window (snaps to octaves) and align keyboard mapping
+  function applyKeyboardRange(lowMidi, highMidi, strict=true){
+    // Clamp to what the component can actually emit (>= C1 / MIDI 24)
+    lowMidi  = Math.max(LOWEST_EMITTABLE_MIDI, Math.min(127, lowMidi));
+    highMidi = Math.max(lowMidi, Math.min(127, highMidi));
+
+    const fitLow  = Math.floor(lowMidi / 12) * 12;
+    const fitHigh = Math.ceil((highMidi+1) / 12) * 12 - 1;
+    const neededOcts = Math.max(MIN_OCTAVES, Math.ceil((fitHigh - fitLow + 1) / 12));
+
+    LOWEST_PITCH = fitLow;
+    TOTAL_KEYS   = neededOcts * 12;
+
+    kb.setAttribute('octaves', String(neededOcts));
+
+    // Align component index→MIDI mapping so clicking plays the intended notes.
+    // We set leftmostKey so that: emitted MIDI (24 + index) == intended MIDI at left edge.
+    // That means leftmostKey = LOWEST_PITCH - 24 (but never below 0).
+    const leftmostIndex = Math.max(0, LOWEST_PITCH - MIDI_BASE_FOR_LAYOUT);
+    setLeftmostIndex(leftmostIndex);
+
+    kb.offsetWidth; // force layout
+    const finalHigh = LOWEST_PITCH + TOTAL_KEYS - 1;
+    log(`🎛 Range ${strict?'(strict) ':''}gesetzt: MIDI ${LOWEST_PITCH}..${finalHigh} | Oktaven: ${neededOcts} | leftmostKey(index)=${leftmostIndex}`);
+  }
+
+  // ---------- Audio ----------
+  const audio = { ctx:null, master:null, voices:new Map() };
+  function audioInit(){
+    if (audio.ctx) return;
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    audio.ctx = new Ctx();
+    audio.master = audio.ctx.createGain();
+    audio.master.gain.value = 0.15;
+    audio.master.connect(audio.ctx.destination);
+    log('🔊 AudioContext created. state=' + audio.ctx.state);
+  }
+  const midiToFreq = m => 440 * Math.pow(2,(m-69)/12);
+  function mkVoice(freq, vel=0.25){
+    const osc = audio.ctx.createOscillator();
+    const gain = audio.ctx.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.value = freq;
+    gain.gain.setValueAtTime(0.0001, audio.ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(Math.max(0.001, vel), audio.ctx.currentTime + 0.01);
+    osc.connect(gain).connect(audio.master);
+    return {osc, gain};
+  }
+  function noteOn(midi, vel=0.8){
+    if (!audio.ctx) audioInit();
+    audio.ctx.resume?.();
+    if (audio.voices.has(midi)) return;
+    const v = mkVoice(midiToFreq(midi), vel);
+    v.osc.start();
+    audio.voices.set(midi, v);
+  }
+  function noteOff(midi){
+    if (!audio.ctx) return;
+    const v = audio.voices.get(midi);
+    if (!v) return;
+    const t = audio.ctx.currentTime;
+    v.gain.gain.cancelScheduledValues(t);
+    v.gain.gain.setTargetAtTime(0.0001, t, 0.03);
+    v.osc.stop(t + 0.08);
+    setTimeout(()=>audio.voices.delete(midi), 120);
+  }
+
+  // Test & Panic
+  document.getElementById('testTone').addEventListener('click', () => {
+    audioInit();
+    audio.ctx.resume?.().then(()=>{
+      log('Test resume state=' + audio.ctx.state);
+      const v = mkVoice(440, 0.2);
+      v.osc.start();
+      v.osc.stop(audio.ctx.currentTime + 0.3);
+    }).catch(e=>log('Test resume err: '+e));
+  });
+  function clearLightingTimers(andDim=false){
+    for (const id of lightTimers) clearTimeout(id);
+    lightTimers.length = 0;
+    if (andDim){
+      const L = getLeftmostIndex();
+      const allIdx = Array.from({length:TOTAL_KEYS},(_,i)=>L+i);
+      if (typeof kb.keysDim==='function') kb.keysDim(allIdx);
+    }
+  }
+  function allNotesOff(){
+    for (const n of scheduled) { try { n.osc.stop(); } catch {} }
+    scheduled.length = 0;
+    for (const [m, v] of audio.voices) { try { v.osc.stop(); } catch {} }
+    audio.voices.clear();
+    clearLightingTimers(true);
+  }
+  document.getElementById('panic').addEventListener('click', ()=>{ allNotesOff(); log('⏹ Panic: all voices stopped, lights cleared.'); });
+
+  // Manual key → sound
+  function midiFromKbEvent(e) {
+    let m = e?.detail?.midi ?? e?.detail?.note ?? e?.detail;
+    if (typeof m === 'number' && Number.isFinite(m)) return Math.round(m);
+    const idx = e?.detail?.index ?? e?.detail?.keyIndex ?? e?.index;
+    if (typeof idx === 'number' && Number.isFinite(idx)) return Math.round(MIDI_BASE_FOR_LAYOUT + idx);
+    return null;
+  }
+  const isValidMidi = m => Number.isInteger(m) && m >= 0 && m <= 127;
+  kb.addEventListener('noteon',    e => { const m = midiFromKbEvent(e); if (isValidMidi(m)) noteOn(m, 0.7); });
+  kb.addEventListener('noteOff',   e => { const m = midiFromKbEvent(e); if (isValidMidi(m)) noteOff(m); });
+  kb.addEventListener('noteoff',   e => { const m = midiFromKbEvent(e); if (isValidMidi(m)) noteOff(m); });
+  kb.addEventListener('keypress',  e => { const m = midiFromKbEvent(e); if (isValidMidi(m)) noteOn(m, 0.7); });
+  kb.addEventListener('keyrelease',e => { const m = midiFromKbEvent(e); if (isValidMidi(m)) noteOff(m); });
+
+  // ---------- Lighting helpers ----------
+  function lightMidi(m){ const idx=indexFromMidi(m); if (typeof kb.keysLight==='function') kb.keysLight([idx]); }
+  function dimMidi(m){   const idx=indexFromMidi(m); if (typeof kb.keysDim  ==='function') kb.keysDim  ([idx]); }
+
+  // ---------- Piano roll ----------
+  function drawRoll(){
+    const pad=6, W=rollCv.clientWidth, H=rollCv.clientHeight;
+    if (rollCv.width!==W||rollCv.height!==H){ rollCv.width=W; rollCv.height=H; }
+    ctx.clearRect(0,0,W,H); ctx.fillStyle='#f3f5fb'; ctx.fillRect(0,0,W,H);
+    if (!notes.length||total<=0) return;
+    const secToX=s=>pad+(W-2*pad)*(s/total), keyH=(H-2*pad)/TOTAL_KEYS;
+    ctx.fillStyle='#2f6fab';
+    for(const n of notes){
+      const i=toIdx(n.p); if(i<0||i>=TOTAL_KEYS) continue;
+      const x=secToX(n.s), w=Math.max(2,secToX(n.e)-secToX(n.s)), y=H-pad-(i+1)*keyH;
+      ctx.fillRect(x,y,w,keyH-1);
+    }
+  }
+  function drawPlayhead(t){
+    if(total<=0) return; const pad=6;
+    const x=pad+(rollCv.width-2*pad)*(Math.min(t,total)/total);
+    ctx.strokeStyle='#e74c3c'; ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,rollCv.height); ctx.stroke();
+  }
+
+  // ---------- Scheduling (sound + lights) ----------
+  function clearScheduledAudio(){
+    if (!audio.ctx) return;
+    for (const n of scheduled) {
+      try {
+        const t = audio.ctx.currentTime;
+        n.gain.gain.cancelScheduledValues(t);
+        n.gain.gain.setTargetAtTime(0.0001, t, 0.02);
+        n.osc.stop(t + 0.05);
+      } catch {}
+    }
+    scheduled.length = 0;
+    if (loopTimer) { clearTimeout(loopTimer); loopTimer = null; }
+  }
+  function scheduleNotesAtTempo(){
+    const scale = scoreBPM / Number(bpm.value); // scoreSec → realSec
+    const startBase = audio.ctx.currentTime + 0.03;
+    let count = 0;
+    for (const n of notes) {
+      const s = n.s * scale;
+      const d = (n.e - n.s) * scale;
+      if (d <= 0) continue;
+
+      // Audio
+      const v = mkVoice(midiToFreq(n.p), 0.22);
+      v.osc.start(startBase + s);
+      v.gain.gain.setValueAtTime(0.22, startBase + s + Math.max(0.01, d - 0.03));
+      v.gain.gain.setTargetAtTime(0.0001, startBase + s + Math.max(0.01, d - 0.03), 0.02);
+      v.osc.stop(startBase + s + d + 0.03);
+      scheduled.push({ ...v, offAt: startBase + s + d + 0.03 });
+
+      // Lights
+      const onDelaySec  = Math.max(0, (startBase + s)     - audio.ctx.currentTime);
+      const offDelaySec = Math.max(0, (startBase + s + d) - audio.ctx.currentTime);
+      lightTimers.push(setTimeout(() => lightMidi(n.p), onDelaySec * 1000));
+      lightTimers.push(setTimeout(() => dimMidi(n.p),   offDelaySec * 1000));
+      count++;
+    }
+    log(`🎼 Scheduled ${count} notes @ BPM ${bpm.value} (score BPM=${scoreBPM})`);
+
+    const passDur = total * scale;
+    if (loopCb.checked) {
+      loopTimer = setTimeout(() => {
+        t0 = 0; startedAt = performance.now()/1000;
+        clearScheduledAudio(); clearLightingTimers(true);
+        scheduleNotesAtTempo();
+      }, Math.max(0, (passDur + 0.05) * 1000));
+    }
+  }
+
+  // ---------- Transport ----------
+  const nowTime=()=> !playing ? t0 : t0 + (performance.now()/1000 - startedAt) * (Number(bpm.value)/scoreBPM);
+  bpm.addEventListener('input',e=>{
+    bpmVal.textContent=e.target.value;
+    if (playing) { stop(); start(); } // re-sync schedules
+  });
+  bpmVal.textContent=bpm.value;
+
+  function tick(){
+    const t=nowTime();
+    if(!loopCb.checked && total>0 && t>=total){
+      drawRoll(); drawPlayhead(total); playing=false; return;
+    }
+    if(loopCb.checked && total>0 && t>=total){
+      t0=0; startedAt=performance.now()/1000;
+    }
+    drawRoll();
+    drawPlayhead(Math.min(t,total));
+    rafId=requestAnimationFrame(tick);
+  }
+  function start(){
+    if(!notes.length||playing) { if(!notes.length) log('⚠️ Keine Noten geladen.'); return; }
+    audioInit(); audio.ctx.resume?.().then(()=>log('Play resume state=' + audio.ctx.state));
+    playing=true; startedAt=performance.now()/1000; t0=0;
+    clearScheduledAudio(); clearLightingTimers(true);
+    scheduleNotesAtTempo();
+    rafId=requestAnimationFrame(tick);
+  }
+  function stop(){
+    playing=false; if(rafId) cancelAnimationFrame(rafId); rafId=null; t0=0;
+    clearScheduledAudio(); clearLightingTimers(true);
+    allNotesOff(); drawRoll();
+  }
+
+  // ---------- Auto-fit keyboard (respects override) ----------
+  function autoFitKeyboard(noteArray){
+    const params = new URLSearchParams(location.search);
+    const forceFit = params.get('fit') === '1';
+
+    if (userRangeOverride && userRangeOverride.strict && !forceFit) return;
+    if (!noteArray.length) return;
+
+    const lowNote  = noteArray.reduce((m, n) => Math.min(m, n.p), 127);
+    const highNote = noteArray.reduce((m, n) => Math.max(m, n.p), 0);
+
+    let low  = Math.max(LOWEST_EMITTABLE_MIDI, lowNote  - PAD_SEMITONES);
+    let high = Math.min(127, highNote + PAD_SEMITONES);
+
+    // If non-strict baseline exists, ensure at least that window
+    if (userRangeOverride && !userRangeOverride.strict) {
+      low  = Math.min(low,  userRangeOverride.low);
+      high = Math.max(high, userRangeOverride.high);
+    }
+
+    applyKeyboardRange(low, high, !forceFit && !!userRangeOverride?.strict);
+  }
+
+  // ---------- MusicXML tempo detection ----------
+  async function detectTempoFromXMLText(text){
+    const xml = new DOMParser().parseFromString(text, "application/xml");
+
+    // 1) <sound tempo="...">
+    const soundWithTempo = xml.querySelector('sound[tempo]');
+    const tempoAttr = Number(soundWithTempo?.getAttribute('tempo'));
+    if (Number.isFinite(tempoAttr) && tempoAttr > 0) return Math.round(tempoAttr);
+
+    // 2) <direction-type><metronome>...</metronome>
+    const met = xml.querySelector('direction-type > metronome');
+    if (met) {
+      const perMin = Number(met.querySelector('per-minute')?.textContent);
+      const unit = met.querySelector('beat-unit')?.textContent?.trim()?.toLowerCase();
+      if (Number.isFinite(perMin) && perMin > 0 && unit) {
+        const base = { 'whole':4, 'half':2, 'quarter':1, 'eighth':0.5, '8th':0.5, '16th':0.25, '32nd':0.125, '64th':0.0625 }[unit] ?? 1;
+        const dots = met.querySelectorAll('beat-unit-dot').length;
+        let dotFactor = 1; for (let k=1;k<=dots;k++) dotFactor += Math.pow(0.5, k);
+        const beatInQuarters = base * dotFactor;
+        const qpm = perMin * beatInQuarters;
+        return Math.max(1, Math.round(qpm));
+      }
+    }
+    return null;
+  }
+
+  // ---------- Loaders ----------
+  async function parseMidi(file){
+    if(!window.mm) throw new Error('Magenta (mm) nicht geladen.');
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const fn = mm?.midiToNoteSequence || mm?.midiToSequenceProto;
+    if(typeof fn!=='function') throw new Error('Kein MIDI-Parser exportiert.');
+    return await Promise.resolve(fn(bytes));
+  }
+  async function loadMidi(file){
+    try{
+      const ns = await parseMidi(file);
+      const qpm = Math.round(ns?.tempos?.[0]?.qpm || ns?.qpm || 0);
+      if (qpm > 0) { scoreBPM = qpm; bpm.value = String(qpm); bpmVal.textContent = String(qpm); log('⏱ Tempo aus MIDI:', qpm, 'BPM'); }
+      notes = (ns.notes||[]).map(n=>({p:n.pitch,s:n.startTime,e:n.endTime})).sort((a,b)=>a.s-b.s);
+      total = ns.totalTime || (notes.length?Math.max(...notes.map(n=>n.e)):0);
+
+      const params = new URLSearchParams(location.search);
+      const forceFit = params.get('fit') === '1';
+      if (userRangeOverride && userRangeOverride.strict && !forceFit) {
+        applyKeyboardRange(userRangeOverride.low, userRangeOverride.high, true);
+      } else {
+        autoFitKeyboard(notes);
+      }
+
+      drawRoll();
+      const has = notes.length>0;
+      playBtn.disabled = stopBtn.disabled = !has;
+      log('MIDI geladen:', file.name, `| Noten: ${notes.length} | Dauer: ${total.toFixed(2)}s`);
+    }catch(err){
+      console.error(err); log('MIDI-Fehler:', err?.message||err);
+      alert('MIDI konnte nicht geladen werden. Probier MusicXML.\n\nDetails: '+(err?.message||err));
+    }
+  }
+
+  let osmd=null;
+  async function renderXMLinOSMD(fileOrText, isText=false){
+    if(!window.opensheetmusicdisplay) throw new Error('OSMD Script nicht geladen.');
+    if(!osmd) osmd=new opensheetmusicdisplay.OpenSheetMusicDisplay('osmd',{drawingParameters:'compact'});
+    if (isText) { await osmd.load(fileOrText); }
+    else {
+      const name = fileOrText.name?.toLowerCase?.() || '';
+      const ext = name.split('.').pop();
+      if(ext==='mxl'){ await osmd.load(await fileOrText.arrayBuffer()); }
+      else { await osmd.load(await fileOrText.text()); }
+    }
+    await osmd.render();
+    log('MusicXML gerendert.');
+  }
+
+  async function extractNotesFromXMLText(text, bpmForTiming) {
+    const xml = new DOMParser().parseFromString(text, "application/xml");
+
+    const stepToSemitone = {C:0,D:2,E:4,F:5,G:7,A:9,B:11};
+    const secPerQuarterAtBase = 60 / (bpmForTiming || 100);
+
+    const parts = Array.from(xml.querySelectorAll("score-partwise > part, part"));
+    const collected = [];
+
+    for (const part of parts) {
+      const voiceTimes = new Map();
+      const tieOpen = new Map();
+      let divisions = Number(part.querySelector("attributes > divisions")?.textContent || xml.querySelector("divisions")?.textContent || 1);
+      const measures = Array.from(part.querySelectorAll(":scope > measure"));
+
+      for (const m of measures) {
+        const dHere = m.querySelector("attributes > divisions");
+        if (dHere) divisions = Number(dHere.textContent) || divisions;
+
+        const events = Array.from(m.querySelectorAll(":scope > note, :scope > backup, :scope > forward"));
+        for (const ev of events) {
+          if (ev.tagName === "backup") {
+            const durQ = Number(ev.querySelector("duration")?.textContent || 0) / divisions;
+            const durSec = durQ * secPerQuarterAtBase;
+            for (const [v,t] of voiceTimes.entries()) voiceTimes.set(v, Math.max(0, t - durSec));
+            continue;
+          }
+          if (ev.tagName === "forward") {
+            const durQ = Number(ev.querySelector("duration")?.textContent || 0) / divisions;
+            const durSec = durQ * secPerQuarterAtBase;
+            for (const [v,t] of voiceTimes.entries()) voiceTimes.set(v, t + durSec);
+            continue;
+          }
+
+          const isRest = ev.querySelector("rest") !== null;
+          const isChordFollower = ev.querySelector("chord") !== null;
+          const voiceId = ev.querySelector("voice")?.textContent?.trim() || "1";
+          const curTime = voiceTimes.get(voiceId) ?? 0;
+
+          let durDivs = ev.querySelector("duration") ? Number(ev.querySelector("duration").textContent) : NaN;
+          if (!Number.isFinite(durDivs) && isChordFollower) durDivs = 0;
+          const durQ = (durDivs / divisions) || 0;
+          const durSec = durQ * secPerQuarterAtBase;
+
+          if (!isRest) {
+            const step = ev.querySelector("step")?.textContent;
+            const alter = Number(ev.querySelector("alter")?.textContent || 0);
+            const octave = Number(ev.querySelector("octave")?.textContent);
+            if (step && Number.isFinite(octave)) {
+              const pitchMidi = 12 * (octave + 1) + stepToSemitone[step] + alter;
+              const startSec = curTime, endSec = startSec + durSec;
+
+              const tieTags = Array.from(ev.querySelectorAll("tie"));
+              const hasTieStart = tieTags.some(t => t.getAttribute("type") === "start");
+              const hasTieStop  = tieTags.some(t => t.getAttribute("type") === "stop");
+              const tieKey = voiceId + "|" + pitchMidi;
+
+              if (hasTieStop && tieOpen.has(tieKey)) {
+                const idx = tieOpen.get(tieKey);
+                if (idx != null && collected[idx]) collected[idx].e = Math.max(collected[idx].e, endSec);
+              }
+              if (!hasTieStop || hasTieStart) {
+                if (endSec > startSec) {
+                  const newIdx = collected.push({ p: pitchMidi, s: startSec, e: endSec, _voice: voiceId }) - 1;
+                  if (hasTieStart) tieOpen.set(tieKey, newIdx); else tieOpen.delete(tieKey);
+                }
+              }
+              if (hasTieStop && !hasTieStart) tieOpen.delete(tieKey);
+            }
+          }
+          if (!isChordFollower) voiceTimes.set(voiceId, curTime + durSec);
+        }
+      }
+    }
+
+    notes = collected.filter(n => n.e > n.s).map(({p,s,e})=>({p,s,e})).sort((a,b)=>a.s-b.s);
+    total = notes.length ? Math.max(...notes.map(n=>n.e)) : 0;
+    t0 = 0;
+
+    const params = new URLSearchParams(location.search);
+    const forceFit = params.get('fit') === '1';
+
+    if (!notes.length) {
+      log('⚠️ XML-Parser fand keine Noten. Enthält die Datei echte Noten (nicht nur Pausen/Layouts)?');
+    } else {
+      log(`XML-Parser: ${notes.length} Noten, Dauer: ${total.toFixed(2)}s (bei ${bpmForTiming} BPM)`);
+      if (userRangeOverride && userRangeOverride.strict && !forceFit) {
+        applyKeyboardRange(userRangeOverride.low, userRangeOverride.high, true);
+      } else {
+        autoFitKeyboard(notes);
+      }
+    }
+  }
+
+  // ---------- File input wiring ----------
+  xmlInput.addEventListener('change', async e => {
+    const f=e.target.files[0]; if(!f) return;
+    const ext=f.name.toLowerCase().split('.').pop();
+    if(!['xml','musicxml','mxl'].includes(ext)) { alert('Bitte .xml/.musicxml/.mxl wählen.'); return; }
+    try {
+      let xmlText = null;
+      if (ext === 'mxl') {
+        await renderXMLinOSMD(f);
+        log('ℹ️ Für Playback/Tempo ist .xml/.musicxml ideal (Text). .mxl wird angezeigt, aber nicht geparst.');
+      } else {
+        xmlText = await f.text();
+        const detected = await detectTempoFromXMLText(xmlText);
+        if (detected && detected > 0) {
+          scoreBPM = detected;
+          bpm.value = String(detected);
+          bpmVal.textContent = String(detected);
+          log('⏱ Tempo aus MusicXML:', detected, 'BPM');
+        } else {
+          log('⏱ Kein Tempo in XML gefunden – Standard bleibt', scoreBPM, 'BPM');
+        }
+        await renderXMLinOSMD(xmlText, true);
+        await extractNotesFromXMLText(xmlText, scoreBPM);
+      }
+      drawRoll();
+      const has = notes.length>0;
+      playBtn.disabled = stopBtn.disabled = !has;
+      log('MusicXML geladen:', f.name, `| Noten: ${notes.length} | Dauer: ${total.toFixed(2)}s`);
+    } catch (err) {
+      console.error(err);
+      log('XML/OSMD Fehler:', err?.message||err);
+      alert('Konnte MusicXML nicht laden/analysieren.');
+    }
+  });
+
+  playBtn.addEventListener('click', start);
+  stopBtn.addEventListener('click', stop);
+
+  // ---------- URL param loader (xml/midi, bpm, range, autoplay) ----------
+  async function loadFromURLParam(){
+    const params = new URLSearchParams(location.search);
+    const xmlUrl  = params.get('xml');
+    const midiUrl = params.get('midi');
+    const bpmUrl  = params.get('bpm');
+    const autoplay= params.get('autoplay');
+
+    // Range from URL (supports MIDI numbers or note names; clamps low to C1/24)
+    const lowMidiParam  = parseMidiOrNote(params.get('low'));
+    const highMidiParam = parseMidiOrNote(params.get('high'));
+    const rangeStrict = params.get('rangeStrict') !== '0'; // default strict
+    const forceFit = params.get('fit') === '1';
+
+    if (lowMidiParam != null && highMidiParam != null) {
+      const lo = Math.min(lowMidiParam, highMidiParam);
+      const hi = Math.max(lowMidiParam, highMidiParam);
+      userRangeOverride = { low: lo, high: hi, strict: rangeStrict };
+      applyKeyboardRange(lo, hi, rangeStrict);
+    } else if (lowMidiParam != null || highMidiParam != null) {
+      log('⚠️ Bitte sowohl "low" als auch "high" setzen (MIDI Zahl oder Notenname, z.B. low=C3&high=G5).');
+    }
+
+    if (bpmUrl && Number(bpmUrl) > 0) {
+      scoreBPM = Number(bpmUrl);
+      bpm.value = String(scoreBPM);
+      bpmVal.textContent = String(scoreBPM);
+      log('⏱ Tempo via URL:', scoreBPM, 'BPM');
+    }
+
+    async function fetchAsFile(url, suggestedName){
+      try {
+        // Same-origin fetch; no explicit CORS mode needed
+        const res = await fetch(url, { cache: 'no-cache', credentials: 'same-origin' });
+        if (!res.ok) {
+          log(`⚠️ Fetch failed: HTTP ${res.status} ${res.statusText} | URL: ${url}`);
+          // retry once without credentials (rarely helps, but cheap)
+          const retry = await fetch(url, { cache: 'no-cache' });
+          if (!retry.ok) {
+            log(`⚠️ Retry failed: HTTP ${retry.status} ${retry.statusText}`);
+            throw new Error(`HTTP ${retry.status}`);
+          }
+          const blob2 = await retry.blob();
+          const name2 = suggestedName || (url.split('/').pop() || 'file');
+          log(`ℹ️ Retry content-type: ${retry.headers.get('Content-Type')||'(none)'}`);
+          return new File([blob2], name2, { type: blob2.type || 'application/octet-stream' });
+        }
+        const blob = await res.blob();
+        const name = suggestedName || (url.split('/').pop() || 'file');
+        log(`✅ Loaded URL ok (${res.status}). Content-Type: ${res.headers.get('Content-Type')||'(none)'}`);
+        return new File([blob], name, { type: blob.type || 'application/octet-stream' });
+      } catch (err) {
+        log('URL-Load Fehler (fetchAsFile): ' + (err?.message||err));
+        throw err;
+      }
+    }
+
+
+    try {
+      if (xmlUrl) {
+        log('🌐 Lade XML von URL:', xmlUrl);
+        const file = await fetchAsFile(xmlUrl);
+        const ext = file.name.toLowerCase().split('.').pop();
+        if (ext === 'mxl') {
+          await renderXMLinOSMD(file);
+          log('ℹ️ .mxl per URL: Score sichtbar. Für Playback bitte .xml/.musicxml verwenden.');
+        } else {
+          const text = await file.text();
+          const detected = await detectTempoFromXMLText(text);
+          if (detected && detected > 0 && !bpmUrl) {
+            scoreBPM = detected; bpm.value = String(detected); bpmVal.textContent = String(detected);
+            log('⏱ Tempo aus MusicXML:', detected, 'BPM');
+          }
+          await renderXMLinOSMD(text, true);
+          await extractNotesFromXMLText(text, scoreBPM);
+        }
+        drawRoll();
+        const has = notes.length>0;
+        playBtn.disabled = stopBtn.disabled = !has;
+        if (has && (autoplay || forceFit)) {
+          if (forceFit) {
+            userRangeOverride = null; // ignore strict and fit to notes
+            autoFitKeyboard(notes);
+            drawRoll();
+            log('🧩 Auto-fit erzwungen (fit=1).');
+          }
+          start();
+        }
+        return;
+      }
+      if (midiUrl) {
+        log('🌐 Lade MIDI von URL:', midiUrl);
+        const file = await fetchAsFile(midiUrl);
+        await loadMidi(file);
+        drawRoll();
+        const has = notes.length>0;
+        playBtn.disabled = stopBtn.disabled = !has;
+        if (has && (autoplay || forceFit)) {
+          if (forceFit) { userRangeOverride = null; autoFitKeyboard(notes); drawRoll(); log('🧩 Auto-fit erzwungen (fit=1).'); }
+          start();
+        }
+      }
+    } catch (err) {
+      console.error(err);
+      log('URL-Load Fehler:', err?.message||err);
+      alert('Konnte Datei von URL nicht laden. CORS/HTTPS korrekt?');
+    }
+  }
+
+  // Debug + kick URL loader
+  setTimeout(()=>{
+    log('HTTP-Served?', location.protocol.startsWith('http') ? 'ja' : 'nein (bitte lokalen Server nutzen)');
+    log('Magenta geladen?', !!window.mm, '| midiToNoteSequence:', typeof window.mm?.midiToNoteSequence, '| midiToSequenceProto:', typeof window.mm?.midiToSequenceProto);
+  },0);
+  loadFromURLParam();
+});
+</script>
+</body>
+</html>
