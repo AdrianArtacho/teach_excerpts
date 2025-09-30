@@ -4,6 +4,19 @@
 
 const log = (...a)=>{ const el=document.getElementById('status'); if (!el) return; el.textContent += a.join(' ') + '\n'; el.scrollTop=el.scrollHeight; };
 
+    // --- Hide status log via URL flag ---
+    (function applyLogVisibilityFromURL(){
+    const params = new URLSearchParams(location.search);
+    const v = params.get('log');
+    if (v !== null && /^(0|false|no|off|hide)$/i.test(v)) {
+        const statusBlock = document.getElementById('status');
+        const statusHeader = statusBlock?.previousElementSibling;
+        if (statusHeader && statusHeader.tagName === 'H3') statusHeader.style.display = 'none';
+        if (statusBlock) statusBlock.style.display = 'none';
+    }
+    })();
+
+
 document.addEventListener('DOMContentLoaded', async () => {
   // ---------- URL flags ----------
   const params = new URLSearchParams(location.search);
