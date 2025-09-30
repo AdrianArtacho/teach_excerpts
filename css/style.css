@@ -46,6 +46,7 @@ button:disabled { opacity: .6; cursor: not-allowed; }
 
 /* Responsive roll: width 100%, fixed CSS-height; JS will scale pixels for DPR */
 #roll {
+  display:block;
   width: 100%;
   height: 220px; /* a touch taller for visibility */
   border: 1px solid var(--c4);
