@@ -105,3 +105,30 @@ Keep XML files in the same domain (e.g., /scores/alors0.xml). Then ?xml=./scores
 If you do cross-origin later, the other host must send Access-Control-Allow-Origin: * (or your domain).
 
 ---
+
+This is the default URL (served by GitHub):
+
+https://adrianartacho.github.io/teach_excerpts/
+
+Example:
+
+https://adrianartacho.github.io/teach_excerpts/?xml=./scores/alors0.musicxml&title=Alors%20On%20Danse
+
+All your existing URL flags continue to work (low, high, bpm, autoplay, fit, rangeStrict, and the title override that keeps the emoji).
+
+---
+
+## How to embed
+
+```html
+<iframe
+  src="https://<user>.github.io/<repo>/?xml=./scores/alors0.xml&title=Alors%20On%20Danse&autoplay=1"
+  width="100%"
+  height="980"
+  style="border:0; max-width:1000px; width:100%; display:block; margin:0 auto;"
+  allow="autoplay"
+  loading="lazy"
+></iframe>
+```
+
+---
