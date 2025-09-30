@@ -122,9 +122,9 @@ All your existing URL flags continue to work (low, high, bpm, autoplay, fit, ran
 
 ```html
 <iframe
-  src="https://<user>.github.io/<repo>/?xml=./scores/alors0.xml&title=Alors%20On%20Danse&autoplay=1"
-  width="100%"
-  height="980"
+  src="https://AdrianArtacho.github.io/teach_excerpts/?xml=./scores/alors0.musicxml&title=Alors%20On%20Danse&autoplay=1"
+  width="110%"
+  height="1000"
   style="border:0; max-width:1000px; width:100%; display:block; margin:0 auto;"
   allow="autoplay"
   loading="lazy"
