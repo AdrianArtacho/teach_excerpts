@@ -6,7 +6,7 @@
   <title>Visualizer – Roll ↑ | Score ↔ | Keyboard ↓ + MusicXML BPM</title>
   <link rel="stylesheet" href="./style.css" />
 
-  <!-- (Optional) Magenta MIDI helpers -->
+  <!-- (Optional) Magenta MIDI helpers (only needed for .mid playback) -->
   <script type="module">
     try {
       const core = await import('./core.js');
@@ -17,19 +17,19 @@
     }
   </script>
 
-  <!-- Local copies -->
+  <!-- Local copies (put these files next to index.html or adjust paths) -->
   <script defer src="./opensheetmusicdisplay.min.js"></script>
   <script defer src="./all-around-keyboard.min.js"></script>
 
-  <!-- App code -->
+  <!-- Your app code -->
   <script defer src="./app.js"></script>
 </head>
 <body>
-  <!-- Title is replaceable via ?title=... (emoji stays) -->
+  <!-- Title is replaceable via ?title=... (emoji stays unless you set it yourself) -->
   <h1 id="titleLine">🎹 <span id="titleText">Visualizer – Roll ↑ | Score ↔ | Keyboard ↓</span></h1>
 
-  <div class="card" id="dropZone">
-    <!-- Controls (no visible XML button now) -->
+  <div class="card">
+    <!-- Controls (MusicXML picker inline here) -->
     <div class="row">
       <button id="play" disabled>Play</button>
       <button id="stop" disabled>Stop</button>
@@ -38,15 +38,18 @@
       <input id="bpm" type="range" min="30" max="240" step="1" value="100">
       <button id="testTone">🔊 Test Tone</button>
       <button id="panic">⏹ Panic</button>
-      <!-- Hidden file input kept for “just in case” (trigger via keyboard ‘o’ or click the roll) -->
-      <input id="xmlFile" type="file" accept=".musicxml,.xml,.mxl" style="display:none">
+
+      <!-- MusicXML picker -->
+      <label class="file-inline"><strong>MusicXML laden:</strong>
+        <input id="xmlFile" type="file" accept=".musicxml,.xml,.mxl">
+      </label>
     </div>
 
     <!-- ORDER: Roll (top) -->
     <canvas id="roll"></canvas>
 
     <!-- Score (middle) -->
-    <div id="osmd"><p class="small">Tipp: Ziehe eine MusicXML-Datei hierher (oder drücke “o”), um sie zu laden.</p></div>
+    <div id="osmd"><p class="small">Lade eine MusicXML-Datei, um die Notenschrift zu sehen.</p></div>
 
     <!-- Keyboard (bottom) -->
     <all-around-keyboard id="kb" octaves="2" width="900" depth="120"></all-around-keyboard>
