@@ -131,4 +131,8 @@ All your existing URL flags continue to work (low, high, bpm, autoplay, fit, ran
 ></iframe>
 ```
 
+Embed example:
+
+https://www.artacho.at/elemu/
+
 ---
