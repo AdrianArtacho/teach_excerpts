@@ -2,18 +2,34 @@
 <html lang="de">
 <head>
   <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Visualizer – Roll ↑ | Score ↔ | Keyboard ↓ + MusicXML BPM</title>
+  <link rel="stylesheet" href="./style.css" />
 
-  <link rel="preload" as="script" href="./opensheetmusicdisplay.min.js">
-  <link rel="preload" as="script" href="./all-around-keyboard.min.js">
+  <!-- (Optional) Magenta MIDI helpers (only needed for .mid playback) -->
+  <script type="module">
+    try {
+      const core = await import('./core.js');
+      const midi = await import('./midi_io.js');
+      window.mm = { ...core, ...midi };
+    } catch (e) {
+      console.warn('Magenta modules not loaded (ok for MusicXML-only).', e);
+    }
+  </script>
 
-  <link rel="stylesheet" href="./css/style.css">
+  <!-- Local copies (put these files next to index.html or adjust paths) -->
+  <script defer src="./opensheetmusicdisplay.min.js"></script>
+  <script defer src="./all-around-keyboard.min.js"></script>
+
+  <!-- Your app code -->
+  <script defer src="./app.js"></script>
 </head>
 <body>
-  <!-- Title (JS can replace the text span via ?title=...) -->
+  <!-- Title is replaceable via ?title=... (emoji stays unless you set it yourself) -->
   <h1 id="titleLine">🎹 <span id="titleText">Visualizer – Roll ↑ | Score ↔ | Keyboard ↓</span></h1>
 
   <div class="card">
+    <!-- Controls (MusicXML picker inline here) -->
     <div class="row">
       <button id="play" disabled>Play</button>
       <button id="stop" disabled>Stop</button>
@@ -23,24 +39,23 @@
       <button id="testTone">🔊 Test Tone</button>
       <button id="panic">⏹ Panic</button>
 
+      <!-- MusicXML picker -->
       <label class="file-inline"><strong>MusicXML laden:</strong>
         <input id="xmlFile" type="file" accept=".musicxml,.xml,.mxl">
       </label>
     </div>
 
+    <!-- ORDER: Roll (top) -->
     <canvas id="roll"></canvas>
+
+    <!-- Score (middle) -->
     <div id="osmd"><p class="small">Lade eine MusicXML-Datei, um die Notenschrift zu sehen.</p></div>
+
+    <!-- Keyboard (bottom) -->
     <all-around-keyboard id="kb" octaves="2" width="900" depth="120"></all-around-keyboard>
 
     <h3>Status</h3>
     <div id="status"></div>
   </div>
-
-  <!-- Vendor libs -->
-  <script defer src="./opensheetmusicdisplay.min.js"></script>
-  <script defer src="./all-around-keyboard.min.js"></script>
-
-  <!-- Your app logic (the last working JS, moved into this file) -->
-  <script defer src="./app.js"></script>
 </body>
 </html>

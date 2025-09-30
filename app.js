@@ -1,84 +1,13 @@
-<!DOCTYPE html>
-<html lang="de">
-<head>
-  <meta charset="utf-8" />
-  <title>Visualizer – Roll ↑ | Score ↔ | Keyboard ↓ + MusicXML BPM</title>
-
-  <!-- (Optional) Magenta MIDI helpers -->
-  <script type="module">
-    try {
-      const core = await import('./core.js');
-      const midi = await import('./midi_io.js');
-      window.mm = { ...core, ...midi };
-    } catch (e) {
-      console.warn('Magenta modules not loaded (ok for MusicXML-only).', e);
-    }
-  </script>
-
-  <!-- Local copies -->
-  <script defer src="./opensheetmusicdisplay.min.js"></script>
-  <script defer src="./all-around-keyboard.min.js"></script>
-
-  <style>
-    :root { --c1:#2f6fab; --c2:#f5f7fb; --c3:#222; --c4:#d7dbe4; }
-    * { box-sizing:border-box }
-    body{font-family:system-ui,Arial,sans-serif;background:var(--c2);color:var(--c3);margin:0;padding:24px}
-    h1{margin:0 0 12px;color:var(--c1); display:flex; align-items:center; gap:.5ch; flex-wrap:wrap}
-    .card{background:#fff;border:1px solid var(--c4);border-radius:12px;padding:16px;max-width:1000px;margin:0 auto}
-    .row{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:10px 0}
-    label{font-size:.95rem}
-    input[type="range"]{width:220px}
-    button{padding:8px 12px;border-radius:8px;border:1px solid var(--c4);background:#fff;cursor:pointer}
-    button:disabled{opacity:.6;cursor:not-allowed}
-    #roll{width:100%;height:200px;border:1px solid var(--c4);border-radius:10px;background:#fff;margin:10px 0 14px}
-    #osmd{background:#fff;border:1px solid var(--c4);border-radius:10px;padding:10px;margin:12px 0;max-height:420px;overflow:auto}
-    /* More breathing room below the keyboard */
-    all-around-keyboard{width:100%;height:170px;display:block;border:1px solid var(--c4);border-radius:10px;margin:12px 0 36px}
-    #status{font:12px/1.4 ui-monospace,monospace;background:#fff;border:1px solid #e0e4ee;border-radius:8px;padding:8px;white-space:pre-wrap;max-height:300px;overflow:auto;margin-top:24px}
-    .small{font-size:.9rem;color:#555}
-    .file-inline { display:inline-flex; align-items:center; gap:.5ch; }
-  </style>
-</head>
-<body>
-  <!-- Title text is replaceable via ?title=... but the emoji stays -->
-  <h1 id="titleLine">🎹 <span id="titleText">Visualizer – Roll ↑ | Score ↔ | Keyboard ↓</span></h1>
-
-  <div class="card">
-    <!-- Controls (MusicXML picker inline here) -->
-    <div class="row">
-      <button id="play" disabled>Play</button>
-      <button id="stop" disabled>Stop</button>
-      <label><input id="loop" type="checkbox"> Loop</label>
-      <label><strong>Tempo:</strong> <span id="bpmVal">100</span> BPM</label>
-      <input id="bpm" type="range" min="30" max="240" step="1" value="100">
-      <button id="testTone">🔊 Test Tone</button>
-      <button id="panic">⏹ Panic</button>
-
-      <!-- MusicXML picker inline with controls -->
-      <label class="file-inline"><strong>MusicXML laden:</strong>
-        <input id="xmlFile" type="file" accept=".musicxml,.xml,.mxl">
-      </label>
-    </div>
-
-    <!-- ORDER: Roll (top) -->
-    <canvas id="roll"></canvas>
-
-    <!-- Score (middle) -->
-    <div id="osmd"><p class="small">Lade eine MusicXML-Datei, um die Notenschrift zu sehen.</p></div>
-
-    <!-- Keyboard (bottom) -->
-    <all-around-keyboard id="kb" octaves="2" width="900" depth="120"></all-around-keyboard>
-
-    <h3>Status</h3>
-    <div id="status"></div>
-  </div>
-
-<script>
-const log = (...a)=>{ const el=document.getElementById('status'); el.textContent += a.join(' ') + '\\n'; el.scrollTop=el.scrollHeight; };
+// ===== app.js =====
+const log = (...a) => {
+  const el = document.getElementById('status');
+  el.textContent += a.join(' ') + '\n';
+  el.scrollTop = el.scrollHeight;
+};
 
 document.addEventListener('DOMContentLoaded', async () => {
   // ---------- Title via URL (keeps the emoji) ----------
-  (function applyTitleFromURL(){
+  (function applyTitleFromURL() {
     const params = new URLSearchParams(location.search);
     const t = params.get('title');
     if (!t) return;
@@ -164,8 +93,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     kb.setAttribute('octaves', String(neededOcts));
 
     // Align component index→MIDI mapping so clicking plays the intended notes.
-    // We set leftmostKey so that: emitted MIDI (24 + index) == intended MIDI at left edge.
-    // That means leftmostKey = LOWEST_PITCH - 24 (but never below 0).
     const leftmostIndex = Math.max(0, LOWEST_PITCH - MIDI_BASE_FOR_LAYOUT);
     setLeftmostIndex(leftmostIndex);
 
@@ -216,7 +143,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   // Test & Panic
-  document.getElementById('testTone').addEventListener('click', () => {
+  testBtn.addEventListener('click', () => {
     audioInit();
     audio.ctx.resume?.().then(()=>{
       log('Test resume state=' + audio.ctx.state);
@@ -241,7 +168,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     audio.voices.clear();
     clearLightingTimers(true);
   }
-  document.getElementById('panic').addEventListener('click', ()=>{ allNotesOff(); log('⏹ Panic: all voices stopped, lights cleared.'); });
+  panicBtn.addEventListener('click', ()=>{ allNotesOff(); log('⏹ Panic: all voices stopped, lights cleared.'); });
 
   // Manual key → sound
   function midiFromKbEvent(e) {
@@ -395,8 +322,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // 1) <sound tempo="...">
     const soundWithTempo = xml.querySelector('sound[tempo]');
-    const tempoAttr = Number(soundWithTempo?.getAttribute('tempo'));
-    if (Number.isFinite(tempoAttr) && tempoAttr > 0) return Math.round(tempoAttr);
+    for (const attr of ['tempo','per-minute','permin']) {
+      const val = Number(soundWithTempo?.getAttribute(attr));
+      if (Number.isFinite(val) && val > 0) return Math.round(val);
+    }
 
     // 2) <direction-type><metronome>...</metronome>
     const met = xml.querySelector('direction-type > metronome');
@@ -632,7 +561,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const res = await fetch(url, { cache: 'no-cache', credentials: 'same-origin' });
         if (!res.ok) {
           log(`⚠️ Fetch failed: HTTP ${res.status} ${res.statusText} | URL: ${url}`);
-          // retry once without credentials (rarely helps, but cheap)
+          // retry once without credentials
           const retry = await fetch(url, { cache: 'no-cache' });
           if (!retry.ok) {
             log(`⚠️ Retry failed: HTTP ${retry.status} ${retry.statusText}`);
@@ -652,7 +581,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         throw err;
       }
     }
-
 
     try {
       if (xmlUrl) {
@@ -712,6 +640,3 @@ document.addEventListener('DOMContentLoaded', async () => {
   },0);
   loadFromURLParam();
 });
-</script>
-</body>
-</html>

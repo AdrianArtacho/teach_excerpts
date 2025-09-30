@@ -77,3 +77,31 @@ Full title override (you provide everything, including emoji/HTML):
 
 Load a score and show a custom title:
 ?xml=https://example.com/piece.musicxml&title=Beispiel%20Stücke
+
+---
+
+Query parameters you can use
+
+?xml=URL or ?midi=URL
+
+?title=Custom%20Title
+
+?bpm=120
+
+?low=C3&high=G5 (also accepts MIDI numbers)
+
+?rangeStrict=0 (let auto-fit expand beyond your low/high if needed)
+
+?fit=1 (force fit-to-notes)
+
+?autoplay=1 (subject to browser gesture rules)
+
+---
+
+Notes:
+
+Keep XML files in the same domain (e.g., /scores/alors0.xml). Then ?xml=./scores/alors0.xml avoids cross-origin/CORS altogether.
+
+If you do cross-origin later, the other host must send Access-Control-Allow-Origin: * (or your domain).
+
+---
