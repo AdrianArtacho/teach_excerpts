@@ -63,6 +63,7 @@ button:disabled { opacity: .6; cursor: not-allowed; }
   margin: 12px 0;
   max-height: 420px;
   overflow: auto;
+  width: 100%;
 }
 
 /* More breathing room below the keyboard */

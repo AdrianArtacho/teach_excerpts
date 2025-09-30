@@ -136,3 +136,24 @@ Embed example:
 https://www.artacho.at/elemu/
 
 ---
+
+Quick usage notes
+
+Fit score to width
+?scoreFit=1
+(re-fits on resize/embedding; uses a two-pass render)
+
+Explicit score zoom (overrides fit):
+?scoreZoom=1.2
+
+Transpose visuals only (keyboard + lights):
+?transposeVis=12 (or -12, etc.)
+Audio & piano-roll stay at real pitch.
+
+Loop default on:
+?loop=1
+
+Hide status log:
+?hideLog=1
+
+Everything else you already had (BPM detection, URL xml, range flags, autoplay, panic, test tone) keeps working.
