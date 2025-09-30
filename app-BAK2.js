@@ -1,33 +1,25 @@
-// app.js
-// Visualizer – Roll ↑ | Score ↔ | Keyboard ↓ + MusicXML BPM
-// Features: MusicXML render, WebAudio synth, piano roll, keyboard lights, URL flags, visual-only transpose
-
-const log = (...a)=>{ const el=document.getElementById('status'); if (!el) return; el.textContent += a.join(' ') + '\n'; el.scrollTop=el.scrollHeight; };
+/* global opensheetmusicdisplay */
+const log = (...a)=>{ const el=document.getElementById('status'); if(!el) return; el.textContent += a.join(' ') + '\n'; el.scrollTop=el.scrollHeight; };
 
 document.addEventListener('DOMContentLoaded', async () => {
-  // ---------- URL flags ----------
-  const params = new URLSearchParams(location.search);
-
-  // Title (keeps emoji; index.html owns the actual <h1>, but we support it here if present)
+  // ---------- Title via URL (keeps the emoji) ----------
   (function applyTitleFromURL(){
+    const params = new URLSearchParams(location.search);
     const t = params.get('title');
-    if (!t) return;
-    const span = document.getElementById('titleText');
-    if (span) span.textContent = t;
+    if (t) {
+      const span = document.getElementById('titleText');
+      if (span) span.textContent = t;
+    }
   })();
 
-  // Visual-only transpose for keyboard lighting
-  const transposeVis = Number(params.get('transposeVis') ?? params.get('transpose') ?? 0) || 0;
-  if (transposeVis !== 0) log(`🎚 Visual transpose (lights only): ${transposeVis} semitones`);
-
   // ---------- Config ----------
-  let scoreBPM = 100;          // dynamically set from XML/MIDI (or ?bpm=)
-  const MIN_OCTAVES = 2;       // cute default
-  const PAD_SEMITONES = 1;     // a little margin so edge notes aren't clipped
-  const LOWEST_EMITTABLE_MIDI = 24; // all-around-keyboard emits MIDI = 24 + index
+  let scoreBPM = 100;               // dynamically set from XML/MIDI
+  const MIN_OCTAVES = 2;            // cute default
+  const PAD_SEMITONES = 1;          // small margin
+  const LOWEST_EMITTABLE_MIDI = 24; // component’s floor = C1 (MIDI 24)
+  const MIDI_BASE_FOR_LAYOUT = 24;  // index 0 in the component = MIDI 24
 
   // ---------- UI ----------
-  const xmlInput  = document.getElementById('xmlFile');     // may or may not exist depending on your index.html
   const playBtn   = document.getElementById('play');
   const stopBtn   = document.getElementById('stop');
   const testBtn   = document.getElementById('testTone');
@@ -39,35 +31,30 @@ document.addEventListener('DOMContentLoaded', async () => {
   const rollCv    = document.getElementById('roll');
   const ctx       = rollCv.getContext('2d');
 
-  if (window.customElements?.whenDefined) {
-    try { await customElements.whenDefined('all-around-keyboard'); } catch {}
-  }
-
-  // ---------- Keyboard range / mapping ----------
-  let LOWEST_PITCH = 60; // updates after fit or URL range
-  let TOTAL_KEYS   = 12 * (parseInt(kb?.getAttribute('octaves')) || MIN_OCTAVES);
+  // ---------- State ----------
+  let LOWEST_PITCH = 60; // updates after range or auto-fit
+  let TOTAL_KEYS   = 12 * (parseInt(kb.getAttribute('octaves')) || MIN_OCTAVES);
   const toIdx      = p => p - LOWEST_PITCH;
 
-  // Component layout: layout index 0 == MIDI 24 (C1)
-  const MIDI_BASE_FOR_LAYOUT = 24;
-  const getLeftmostIndex = () => Number(kb?.getAttribute('leftmostKey') || 48);
-  const setLeftmostIndex = (idx) => kb?.setAttribute('leftmostKey', String(Math.max(0, Math.round(idx))));
-  const indexFromMidi   = midi => getLeftmostIndex() + (midi - LOWEST_PITCH);
-
-  // ---------- State ----------
-  let notes   = [];   // {p,s,e} in "score seconds" (at scoreBPM reference)
+  let notes   = [];   // {p,s,e}
   let total   = 0;
   let playing = false, startedAt=0, t0=0, rafId=null;
   let scheduled = [], loopTimer=null, lightTimers=[];
 
-  // ---------- Range flags (parse, but apply later) ----------
-  let userRangeOverride = null; // {low, high, strict}
-  const NOTE_INDEX = {c:0,'c#':1,'db':1,d:2,'d#':3,'eb':3,e:4,f:5,'f#':6,'gb':6,g:7,'g#':8,'ab':8,a:9,'a#':10,'bb':10,b:11};
+  // ---------- Keyboard helpers ----------
+  // leftmostKey is the component's *index* of the first key; the component emits MIDI = 24 + index
+  const getLeftmostIndex = () => Number(kb.getAttribute('leftmostKey') ?? 36);
+  const setLeftmostIndex = (idx) => kb.setAttribute('leftmostKey', String(Math.max(0, Math.round(idx))));
+  const indexFromMidi    = midi => getLeftmostIndex() + (midi - LOWEST_PITCH);
 
+  // URL range override (prevents auto-fit unless fit=1)
+  let userRangeOverride = null; // { low, high, strict:true }
+
+  // Note-name parser (C#, Db OK; A0..C8 style)
+  const NOTE_INDEX = {c:0,'c#':1,'db':1,d:2,'d#':3,'eb':3,e:4,f:5,'f#':6,'gb':6,g:7,'g#':8,'ab':8,a:9,'a#':10,'bb':10,b:11};
   function parseNoteNameToMidi(s){
     if (!s) return null;
-    s = String(s).trim();
-    const m = s.match(/^([A-Ga-g])([#b]?)(-?\d+)$/);
+    const m = String(s).trim().match(/^([A-Ga-g])([#b]?)(-?\d+)$/);
     if (!m) return null;
     const name = (m[1]+m[2]).toLowerCase();
     const oct = parseInt(m[3],10);
@@ -83,34 +70,30 @@ document.addEventListener('DOMContentLoaded', async () => {
     return parseNoteNameToMidi(val);
   }
 
-  // Apply a range window (snaps to octaves) and align keyboard mapping
+  // Apply a hard keyboard window (snap to octaves) and align mapping
   function applyKeyboardRange(lowMidi, highMidi, strict=true){
-    if (!kb) return;
-    // Clamp to what the component can actually emit (>= C1 / MIDI 24)
     lowMidi  = Math.max(LOWEST_EMITTABLE_MIDI, Math.min(127, lowMidi));
     highMidi = Math.max(lowMidi, Math.min(127, highMidi));
 
-    const fitLow  = Math.floor(lowMidi / 12) * 12;
-    const fitHigh = Math.ceil((highMidi+1) / 12) * 12 - 1;
-    const neededOcts = Math.max(MIN_OCTAVES, Math.ceil((fitHigh - fitLow + 1) / 12));
+    const fitLow   = Math.floor(lowMidi/12)*12;
+    const fitHigh  = Math.ceil((highMidi+1)/12)*12 - 1;
+    const octaves  = Math.max(MIN_OCTAVES, Math.ceil((fitHigh - fitLow + 1)/12));
 
     LOWEST_PITCH = fitLow;
-    TOTAL_KEYS   = neededOcts * 12;
+    TOTAL_KEYS   = octaves * 12;
 
-    kb.setAttribute('octaves', String(neededOcts));
-
-    // Align component index→MIDI mapping so clicking plays the intended notes.
-    // We set leftmostKey so that: emitted MIDI (24 + index) == intended MIDI at left edge.
-    // That means leftmostKey = LOWEST_PITCH - 24 (but never below 0).
+    // set BEFORE the element upgrades (or re-apply and force a relayout)
+    kb.setAttribute('octaves', String(octaves));
     const leftmostIndex = Math.max(0, LOWEST_PITCH - MIDI_BASE_FOR_LAYOUT);
     setLeftmostIndex(leftmostIndex);
 
+    // Some implementations only pick up new attributes on layout pass
     kb.offsetWidth; // force layout
     const finalHigh = LOWEST_PITCH + TOTAL_KEYS - 1;
-    log(`🎛 Range ${strict?'(strict) ':''}gesetzt: MIDI ${LOWEST_PITCH}..${finalHigh} | Oktaven: ${neededOcts} | leftmostKey(index)=${leftmostIndex}`);
+    log(`🎛 Range ${strict?'(strict) ':''}gesetzt: MIDI ${LOWEST_PITCH}..${finalHigh} | Oktaven: ${octaves} | leftmostKey(index)=${leftmostIndex}`);
   }
 
-  // ---------- Audio ----------
+  // ---------- AUDIO ----------
   const audio = { ctx:null, master:null, voices:new Map() };
   function audioInit(){
     if (audio.ctx) return;
@@ -152,21 +135,19 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   // Test & Panic
-  if (testBtn) {
-    testBtn.addEventListener('click', () => {
-      audioInit();
-      audio.ctx.resume?.().then(()=>{
-        log('Test resume state=' + audio.ctx.state);
-        const v = mkVoice(440, 0.2);
-        v.osc.start();
-        v.osc.stop(audio.ctx.currentTime + 0.3);
-      }).catch(e=>log('Test resume err: '+e));
-    });
-  }
+  testBtn.addEventListener('click', () => {
+    audioInit();
+    audio.ctx.resume?.().then(()=>{
+      log('Test resume state=' + audio.ctx.state);
+      const v = mkVoice(440, 0.2);
+      v.osc.start();
+      v.osc.stop(audio.ctx.currentTime + 0.3);
+    }).catch(e=>log('Test resume err: '+e));
+  });
   function clearLightingTimers(andDim=false){
     for (const id of lightTimers) clearTimeout(id);
     lightTimers.length = 0;
-    if (andDim && kb){
+    if (andDim){
       const L = getLeftmostIndex();
       const allIdx = Array.from({length:TOTAL_KEYS},(_,i)=>L+i);
       if (typeof kb.keysDim==='function') kb.keysDim(allIdx);
@@ -179,9 +160,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     audio.voices.clear();
     clearLightingTimers(true);
   }
-  if (panicBtn) {
-    panicBtn.addEventListener('click', ()=>{ allNotesOff(); log('⏹ Panic: all voices stopped, lights cleared.'); });
-  }
+  panicBtn.addEventListener('click', ()=>{ allNotesOff(); log('⏹ Panic: all voices stopped, lights cleared.'); });
 
   // Manual key → sound
   function midiFromKbEvent(e) {
@@ -192,32 +171,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     return null;
   }
   const isValidMidi = m => Number.isInteger(m) && m >= 0 && m <= 127;
-  if (kb) {
-    kb.addEventListener('noteon',    e => { const m = midiFromKbEvent(e); if (isValidMidi(m)) noteOn(m, 0.7); });
-    kb.addEventListener('noteOff',   e => { const m = midiFromKbEvent(e); if (isValidMidi(m)) noteOff(m); });
-    kb.addEventListener('noteoff',   e => { const m = midiFromKbEvent(e); if (isValidMidi(m)) noteOff(m); });
-    kb.addEventListener('keypress',  e => { const m = midiFromKbEvent(e); if (isValidMidi(m)) noteOn(m, 0.7); });
-    kb.addEventListener('keyrelease',e => { const m = midiFromKbEvent(e); if (isValidMidi(m)) noteOff(m); });
-  }
+  kb.addEventListener('noteon',    e => { const m = midiFromKbEvent(e); if (isValidMidi(m)) noteOn(m, 0.7); });
+  kb.addEventListener('noteOff',   e => { const m = midiFromKbEvent(e); if (isValidMidi(m)) noteOff(m); });
+  kb.addEventListener('noteoff',   e => { const m = midiFromKbEvent(e); if (isValidMidi(m)) noteOff(m); });
+  kb.addEventListener('keypress',  e => { const m = midiFromKbEvent(e); if (isValidMidi(m)) noteOn(m, 0.7); });
+  kb.addEventListener('keyrelease',e => { const m = midiFromKbEvent(e); if (isValidMidi(m)) noteOff(m); });
 
-  // ---------- Lighting helpers (visual-only transpose applied here) ----------
-  function clampMidi(m){ return Math.max(0, Math.min(127, m|0)); }
-  function lightMidi(m){
-    if (!kb) return;
-    const pitch = clampMidi(m + transposeVis);         // visual shift only
-    const idx = indexFromMidi(pitch);
-    if (typeof kb.keysLight === 'function') kb.keysLight([idx]);
-  }
-  function dimMidi(m){
-    if (!kb) return;
-    const pitch = clampMidi(m + transposeVis);         // visual shift only
-    const idx = indexFromMidi(pitch);
-    if (typeof kb.keysDim === 'function') kb.keysDim([idx]);
-  }
+  // ---------- Lighting helpers ----------
+  function lightMidi(m){ const idx=indexFromMidi(m); if (typeof kb.keysLight==='function') kb.keysLight([idx]); }
+  function dimMidi(m){   const idx=indexFromMidi(m); if (typeof kb.keysDim  ==='function') kb.keysDim  ([idx]); }
 
   // ---------- Piano roll ----------
   function drawRoll(){
-    if (!rollCv) return;
     const pad=6, W=rollCv.clientWidth, H=rollCv.clientHeight;
     if (rollCv.width!==W||rollCv.height!==H){ rollCv.width=W; rollCv.height=H; }
     ctx.clearRect(0,0,W,H); ctx.fillStyle='#f3f5fb'; ctx.fillRect(0,0,W,H);
@@ -225,14 +190,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     const secToX=s=>pad+(W-2*pad)*(s/total), keyH=(H-2*pad)/TOTAL_KEYS;
     ctx.fillStyle='#2f6fab';
     for(const n of notes){
-      const i=toIdx(n.p + 0); // roll shows true pitch timeline (no visual transpose)
-      if(i<0||i>=TOTAL_KEYS) continue;
+      const i=toIdx(n.p); if(i<0||i>=TOTAL_KEYS) continue;
       const x=secToX(n.s), w=Math.max(2,secToX(n.e)-secToX(n.s)), y=H-pad-(i+1)*keyH;
       ctx.fillRect(x,y,w,keyH-1);
     }
   }
   function drawPlayhead(t){
-    if (!rollCv || total<=0) return; const pad=6;
+    if(total<=0) return; const pad=6;
     const x=pad+(rollCv.width-2*pad)*(Math.min(t,total)/total);
     ctx.strokeStyle='#e74c3c'; ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,rollCv.height); ctx.stroke();
   }
@@ -252,9 +216,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (loopTimer) { clearTimeout(loopTimer); loopTimer = null; }
   }
   function scheduleNotesAtTempo(){
-    if (!audio.ctx) audioInit();
-    // Convert score seconds → real seconds using current slider BPM
-    const scale = scoreBPM / Number(bpm.value);
+    const scale = scoreBPM / Number(bpm.value); // scoreSec → realSec
     const startBase = audio.ctx.currentTime + 0.03;
     let count = 0;
     for (const n of notes) {
@@ -262,7 +224,6 @@ document.addEventListener('DOMContentLoaded', async () => {
       const d = (n.e - n.s) * scale;
       if (d <= 0) continue;
 
-      // Audio at TRUE pitch (no transpose)
       const v = mkVoice(midiToFreq(n.p), 0.22);
       v.osc.start(startBase + s);
       v.gain.gain.setValueAtTime(0.22, startBase + s + Math.max(0.01, d - 0.03));
@@ -270,7 +231,6 @@ document.addEventListener('DOMContentLoaded', async () => {
       v.osc.stop(startBase + s + d + 0.03);
       scheduled.push({ ...v, offAt: startBase + s + d + 0.03 });
 
-      // Lights (these helpers apply visual transpose)
       const onDelaySec  = Math.max(0, (startBase + s)     - audio.ctx.currentTime);
       const offDelaySec = Math.max(0, (startBase + s + d) - audio.ctx.currentTime);
       lightTimers.push(setTimeout(() => lightMidi(n.p), onDelaySec * 1000));
@@ -280,7 +240,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     log(`🎼 Scheduled ${count} notes @ BPM ${bpm.value} (score BPM=${scoreBPM})`);
 
     const passDur = total * scale;
-    if (loopCb?.checked) {
+    if (loopCb.checked) {
       loopTimer = setTimeout(() => {
         t0 = 0; startedAt = performance.now()/1000;
         clearScheduledAudio(); clearLightingTimers(true);
@@ -291,20 +251,18 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // ---------- Transport ----------
   const nowTime=()=> !playing ? t0 : t0 + (performance.now()/1000 - startedAt) * (Number(bpm.value)/scoreBPM);
-  if (bpm) {
-    bpm.addEventListener('input',e=>{
-      if (bpmVal) bpmVal.textContent=e.target.value;
-      if (playing) { stop(); start(); } // re-sync schedules
-    });
-    if (bpmVal) bpmVal.textContent=bpm.value;
-  }
+  bpm.addEventListener('input',e=>{
+    bpmVal.textContent=e.target.value;
+    if (playing) { stop(); start(); } // re-sync schedules
+  });
+  bpmVal.textContent=bpm.value;
 
   function tick(){
     const t=nowTime();
-    if(!loopCb?.checked && total>0 && t>=total){
+    if(!loopCb.checked && total>0 && t>=total){
       drawRoll(); drawPlayhead(total); playing=false; return;
     }
-    if(loopCb?.checked && total>0 && t>=total){
+    if(loopCb.checked && total>0 && t>=total){
       t0=0; startedAt=performance.now()/1000;
     }
     drawRoll();
@@ -325,24 +283,19 @@ document.addEventListener('DOMContentLoaded', async () => {
     allNotesOff(); drawRoll();
   }
 
-  if (playBtn) playBtn.addEventListener('click', start);
-  if (stopBtn) stopBtn.addEventListener('click', stop);
-
-  // ---------- Auto-fit keyboard (respects override) ----------
+  // ---------- Auto-fit keyboard (respects override unless fit=1) ----------
   function autoFitKeyboard(noteArray){
+    const params = new URLSearchParams(location.search);
     const forceFit = params.get('fit') === '1';
-
     if (userRangeOverride && userRangeOverride.strict && !forceFit) return;
     if (!noteArray.length) return;
 
-    // Use visually shifted pitches for fitting the keyboard’s visible range
-    const lo = noteArray.reduce((m, n) => Math.min(m, clampMidi(n.p + transposeVis)), 127);
-    const hi = noteArray.reduce((m, n) => Math.max(m, clampMidi(n.p + transposeVis)), 0);
+    const lowNote  = noteArray.reduce((m, n) => Math.min(m, n.p), 127);
+    const highNote = noteArray.reduce((m, n) => Math.max(m, n.p), 0);
 
-    let low  = Math.max(LOWEST_EMITTABLE_MIDI, lo  - PAD_SEMITONES);
-    let high = Math.min(127,                     hi + PAD_SEMITONES);
+    let low  = Math.max(LOWEST_EMITTABLE_MIDI, lowNote  - PAD_SEMITONES);
+    let high = Math.min(127, highNote + PAD_SEMITONES);
 
-    // If non-strict baseline exists, ensure at least that window
     if (userRangeOverride && !userRangeOverride.strict) {
       low  = Math.min(low,  userRangeOverride.low);
       high = Math.max(high, userRangeOverride.high);
@@ -354,13 +307,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   // ---------- MusicXML tempo detection ----------
   async function detectTempoFromXMLText(text){
     const xml = new DOMParser().parseFromString(text, "application/xml");
-
-    // 1) <sound tempo="...">
     const soundWithTempo = xml.querySelector('sound[tempo]');
     const tempoAttr = Number(soundWithTempo?.getAttribute('tempo'));
     if (Number.isFinite(tempoAttr) && tempoAttr > 0) return Math.round(tempoAttr);
-
-    // 2) <direction-type><metronome>...</metronome>
     const met = xml.querySelector('direction-type > metronome');
     if (met) {
       const perMin = Number(met.querySelector('per-minute')?.textContent);
@@ -389,21 +338,19 @@ document.addEventListener('DOMContentLoaded', async () => {
     try{
       const ns = await parseMidi(file);
       const qpm = Math.round(ns?.tempos?.[0]?.qpm || ns?.qpm || 0);
-      if (qpm > 0) { scoreBPM = qpm; bpm.value = String(qpm); if (bpmVal) bpmVal.textContent = String(qpm); log('⏱ Tempo aus MIDI:', qpm, 'BPM'); }
+      if (qpm > 0) { scoreBPM = qpm; bpm.value = String(qpm); bpmVal.textContent = String(qpm); log('⏱ Tempo aus MIDI:', qpm, 'BPM'); }
       notes = (ns.notes||[]).map(n=>({p:n.pitch,s:n.startTime,e:n.endTime})).sort((a,b)=>a.s-b.s);
       total = ns.totalTime || (notes.length?Math.max(...notes.map(n=>n.e)):0);
-
+      const params = new URLSearchParams(location.search);
       const forceFit = params.get('fit') === '1';
       if (userRangeOverride && userRangeOverride.strict && !forceFit) {
         applyKeyboardRange(userRangeOverride.low, userRangeOverride.high, true);
       } else {
         autoFitKeyboard(notes);
       }
-
       drawRoll();
       const has = notes.length>0;
-      if (playBtn) playBtn.disabled = !has;
-      if (stopBtn) stopBtn.disabled = !has;
+      playBtn.disabled = stopBtn.disabled = !has;
       log('MIDI geladen:', file.name, `| Noten: ${notes.length} | Dauer: ${total.toFixed(2)}s`);
     }catch(err){
       console.error(err); log('MIDI-Fehler:', err?.message||err);
@@ -428,10 +375,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   async function extractNotesFromXMLText(text, bpmForTiming) {
     const xml = new DOMParser().parseFromString(text, "application/xml");
-
     const stepToSemitone = {C:0,D:2,E:4,F:5,G:7,A:9,B:11};
     const secPerQuarterAtBase = 60 / (bpmForTiming || 100);
-
     const parts = Array.from(xml.querySelectorAll("score-partwise > part, part"));
     const collected = [];
 
@@ -505,6 +450,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     total = notes.length ? Math.max(...notes.map(n=>n.e)) : 0;
     t0 = 0;
 
+    const params = new URLSearchParams(location.search);
     const forceFit = params.get('fit') === '1';
 
     if (!notes.length) {
@@ -519,88 +465,56 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
 
-  // ---------- File input wiring (if button exists) ----------
-  if (xmlInput) {
-    xmlInput.addEventListener('change', async e => {
-      const f=e.target.files[0]; if(!f) return;
-      const ext=f.name.toLowerCase().split('.').pop();
-      if(!['xml','musicxml','mxl'].includes(ext)) { alert('Bitte .xml/.musicxml/.mxl wählen.'); return; }
-      try {
-        let xmlText = null;
-        if (ext === 'mxl') {
-          await renderXMLinOSMD(f);
-          log('ℹ️ Für Playback/Tempo ist .xml/.musicxml ideal (Text). .mxl wird angezeigt, aber nicht geparst.');
-        } else {
-          xmlText = await f.text();
-          const detected = await detectTempoFromXMLText(xmlText);
-          if (detected && detected > 0) {
-            scoreBPM = detected;
-            if (bpm) bpm.value = String(detected);
-            if (bpmVal) bpmVal.textContent = String(detected);
-            log('⏱ Tempo aus MusicXML:', detected, 'BPM');
-          } else {
-            log('⏱ Kein Tempo in XML gefunden – Standard bleibt', scoreBPM, 'BPM');
-          }
-          await renderXMLinOSMD(xmlText, true);
-          await extractNotesFromXMLText(xmlText, scoreBPM);
-        }
-        drawRoll();
-        const has = notes.length>0;
-        if (playBtn) playBtn.disabled = !has;
-        if (stopBtn) stopBtn.disabled = !has;
-        log('MusicXML geladen:', f.name, `| Noten: ${notes.length} | Dauer: ${total.toFixed(2)}s`);
-      } catch (err) {
-        console.error(err);
-        log('XML/OSMD Fehler:', err?.message||err);
-        alert('Konnte MusicXML nicht laden/analysieren.');
+  // ---------- URL first-pass: apply range BEFORE element upgrades ----------
+  (function earlyApplyRangeFromURL(){
+    const params = new URLSearchParams(location.search);
+    const lowMidiParam  = parseMidiOrNote(params.get('low'));
+    const highMidiParam = parseMidiOrNote(params.get('high'));
+
+    if (lowMidiParam != null || highMidiParam != null) {
+      // If only low is provided, keep current width (octaves) and derive high from it.
+      let lo = lowMidiParam ?? LOWEST_PITCH;
+      lo = Math.max(LOWEST_EMITTABLE_MIDI, Math.min(127, lo));
+      let hi;
+      if (highMidiParam != null) {
+        hi = Math.max(lo, Math.min(127, highMidiParam));
+      } else {
+        // keep existing width: current TOTAL_KEYS or MIN_OCTAVES if not yet set
+        const octs = Math.max(MIN_OCTAVES, (parseInt(kb.getAttribute('octaves')) || MIN_OCTAVES));
+        hi = Math.min(127, lo + octs*12 - 1);
       }
-    });
+
+      userRangeOverride = { low: lo, high: hi, strict: true };
+      // Apply immediately so the component takes these attributes on first layout
+      applyKeyboardRange(lo, hi, true);
+    }
+  })();
+
+  // ---------- File/URL loader ----------
+  playBtn.addEventListener('click', start);
+  stopBtn.addEventListener('click', stop);
+
+  async function fetchAsFile(url, suggestedName){
+    const res = await fetch(url, { cache: 'no-cache' });
+    if (!res.ok) throw new Error('HTTP '+res.status);
+    const blob = await res.blob();
+    const name = suggestedName || (url.split('/').pop() || 'file');
+    return new File([blob], name, { type: blob.type || 'application/octet-stream' });
   }
 
-  // ---------- URL param loader (xml/midi, bpm, range, autoplay) ----------
   async function loadFromURLParam(){
+    const params = new URLSearchParams(location.search);
     const xmlUrl  = params.get('xml');
     const midiUrl = params.get('midi');
     const bpmUrl  = params.get('bpm');
     const autoplay= params.get('autoplay');
-
-    // Range from URL (supports MIDI numbers or note names; clamps low to C1/24)
-    const lowMidiParam  = parseMidiOrNote(params.get('low'));
-    const highMidiParam = parseMidiOrNote(params.get('high'));
-    const rangeStrict = params.get('rangeStrict') !== '0'; // default strict
-    const forceFit = params.get('fit') === '1';
-
-    if (lowMidiParam != null && highMidiParam != null) {
-      const lo = Math.min(lowMidiParam, highMidiParam);
-      const hi = Math.max(lowMidiParam, highMidiParam);
-      userRangeOverride = { low: lo, high: hi, strict: rangeStrict };
-      applyKeyboardRange(lo, hi, rangeStrict);
-    } else if (lowMidiParam != null || highMidiParam != null) {
-      log('⚠️ Bitte sowohl "low" als auch "high" setzen (MIDI Zahl oder Notenname, z.B. low=C3&high=G5).');
-    }
+    const forceFit= params.get('fit') === '1';
 
     if (bpmUrl && Number(bpmUrl) > 0) {
       scoreBPM = Number(bpmUrl);
-      if (bpm) bpm.value = String(scoreBPM);
-      if (bpmVal) bpmVal.textContent = String(scoreBPM);
+      bpm.value = String(scoreBPM);
+      bpmVal.textContent = String(scoreBPM);
       log('⏱ Tempo via URL:', scoreBPM, 'BPM');
-    }
-
-    async function fetchAsFile(url, suggestedName){
-      try {
-        const res = await fetch(url, { cache: 'no-cache' });
-        if (!res.ok) {
-          log(`⚠️ Fetch failed: HTTP ${res.status} ${res.statusText} | URL: ${url}`);
-          throw new Error(`HTTP ${res.status}`);
-        }
-        const blob = await res.blob();
-        const name = suggestedName || (url.split('/').pop() || 'file');
-        log(`✅ Loaded URL ok (${res.status}). Content-Type: ${res.headers.get('Content-Type')||'(none)'}`);
-        return new File([blob], name, { type: blob.type || 'application/octet-stream' });
-      } catch (err) {
-        log('URL-Load Fehler (fetchAsFile): ' + (err?.message||err));
-        throw err;
-      }
     }
 
     try {
@@ -610,12 +524,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         const ext = file.name.toLowerCase().split('.').pop();
         if (ext === 'mxl') {
           await renderXMLinOSMD(file);
-          log('ℹ️ .mxl per URL: Score sichtbar. Für Playback bitte .xml/.musicxml verwenden.');
+          log('ℹ️ .mxl: Score sichtbar. Für Playback bitte .xml/.musicxml verwenden.');
         } else {
           const text = await file.text();
           const detected = await detectTempoFromXMLText(text);
           if (detected && detected > 0 && !bpmUrl) {
-            scoreBPM = detected; if (bpm) bpm.value = String(detected); if (bpmVal) bpmVal.textContent = String(detected);
+            scoreBPM = detected; bpm.value = String(detected); bpmVal.textContent = String(detected);
             log('⏱ Tempo aus MusicXML:', detected, 'BPM');
           }
           await renderXMLinOSMD(text, true);
@@ -623,15 +537,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
         drawRoll();
         const has = notes.length>0;
-        if (playBtn) playBtn.disabled = !has;
-        if (stopBtn) stopBtn.disabled = !has;
+        playBtn.disabled = stopBtn.disabled = !has;
         if (has && (autoplay || forceFit)) {
-          if (forceFit) {
-            userRangeOverride = null; // ignore strict and fit to notes
-            autoFitKeyboard(notes);
-            drawRoll();
-            log('🧩 Auto-fit erzwungen (fit=1).');
-          }
+          if (forceFit) { userRangeOverride = null; autoFitKeyboard(notes); drawRoll(); log('🧩 Auto-fit erzwungen (fit=1).'); }
           start();
         }
         return;
@@ -642,8 +550,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         await loadMidi(file);
         drawRoll();
         const has = notes.length>0;
-        if (playBtn) playBtn.disabled = !has;
-        if (stopBtn) stopBtn.disabled = !has;
+        playBtn.disabled = stopBtn.disabled = !has;
         if (has && (autoplay || forceFit)) {
           if (forceFit) { userRangeOverride = null; autoFitKeyboard(notes); drawRoll(); log('🧩 Auto-fit erzwungen (fit=1).'); }
           start();
@@ -656,10 +563,20 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
 
-  // Debug + kick URL loader
+  // ---------- Debug + kick URL loader ----------
   setTimeout(()=>{
-    log('HTTP-Served?', location.protocol.startsWith('http') ? 'ja' : 'nein (bitte lokalen Server nutzen)');
+    log('HTTP-Served?', location.protocol.startsWith('http') ? 'ja' : 'nein');
     log('Magenta geladen?', !!window.mm, '| midiToNoteSequence:', typeof window.mm?.midiToNoteSequence, '| midiToSequenceProto:', typeof window.mm?.midiToSequenceProto);
   },0);
+
+  // (Important) Wait for element definition only AFTER we pushed early attributes
+  if (window.customElements?.whenDefined) {
+    try { await customElements.whenDefined('all-around-keyboard'); } catch {}
+  }
+  // After upgrade, re-apply leftmost if needed (some builds reset once)
+  if (userRangeOverride?.strict) {
+    applyKeyboardRange(userRangeOverride.low, userRangeOverride.high, true);
+  }
+
   loadFromURLParam();
 });
