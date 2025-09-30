@@ -328,54 +328,28 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (playBtn) playBtn.addEventListener('click', start);
   if (stopBtn) stopBtn.addEventListener('click', stop);
 
-    function drawRoll(){
-    if (!rollCv) return;
-    const pad=6, W=rollCv.clientWidth, H=rollCv.clientHeight;
-    if (rollCv.width!==W||rollCv.height!==H){ rollCv.width=W; rollCv.height=H; }
-    ctx.clearRect(0,0,W,H); ctx.fillStyle='#f3f5fb'; ctx.fillRect(0,0,W,H);
-    if (!notes.length||total<=0) return;
-
-    const secToX=s=>pad+(W-2*pad)*(s/total), keyH=(H-2*pad)/TOTAL_KEYS;
-    ctx.fillStyle='#2f6fab';
-    for (const n of notes) {
-        const i = toIdx(n.p);                  // ← TRUE pitch (no transpose)
-        if (i<0||i>=TOTAL_KEYS) continue;
-        const x=secToX(n.s), w=Math.max(2,secToX(n.e)-secToX(n.s)), y=H-pad-(i+1)*keyH;
-        ctx.fillRect(x,y,w,keyH-1);
-    }
-    }
-
   // ---------- Auto-fit keyboard (respects override) ----------
-    function autoFitKeyboard(noteArray){
+  function autoFitKeyboard(noteArray){
     const forceFit = params.get('fit') === '1';
+
     if (userRangeOverride && userRangeOverride.strict && !forceFit) return;
     if (!noteArray.length) return;
 
-    // True pitch range (for roll)
-    const loTrue = noteArray.reduce((m, n) => Math.min(m, n.p), 127);
-    const hiTrue = noteArray.reduce((m, n) => Math.max(m, n.p), 0);
+    // Use visually shifted pitches for fitting the keyboard’s visible range
+    const lo = noteArray.reduce((m, n) => Math.min(m, clampMidi(n.p + transposeVis)), 127);
+    const hi = noteArray.reduce((m, n) => Math.max(m, clampMidi(n.p + transposeVis)), 0);
 
-    // Visually shifted range (for lights)
-    const loVis  = noteArray.reduce((m, n) => Math.min(m, Math.max(0, Math.min(127, n.p + transposeVis))), 127);
-    const hiVis  = noteArray.reduce((m, n) => Math.max(m, Math.max(0, Math.min(127, n.p + transposeVis))), 0);
+    let low  = Math.max(LOWEST_EMITTABLE_MIDI, lo  - PAD_SEMITONES);
+    let high = Math.min(127,                     hi + PAD_SEMITONES);
 
-    // Use the union so BOTH roll (true) and lights (shifted) are in view
-    let low  = Math.min(loTrue, loVis);
-    let high = Math.max(hiTrue, hiVis);
-
-    // Safety pad + component floor/ceiling
-    low  = Math.max(LOWEST_EMITTABLE_MIDI,  low  - PAD_SEMITONES);
-    high = Math.min(127,                    high + PAD_SEMITONES);
-
-    // If a non-strict baseline exists, ensure at least that window
+    // If non-strict baseline exists, ensure at least that window
     if (userRangeOverride && !userRangeOverride.strict) {
-        low  = Math.min(low,  userRangeOverride.low);
-        high = Math.max(high, userRangeOverride.high);
+      low  = Math.min(low,  userRangeOverride.low);
+      high = Math.max(high, userRangeOverride.high);
     }
 
     applyKeyboardRange(low, high, !forceFit && !!userRangeOverride?.strict);
-    }
-
+  }
 
   // ---------- MusicXML tempo detection ----------
   async function detectTempoFromXMLText(text){
