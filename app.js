@@ -38,10 +38,12 @@
     }
   })();
 
-  // Hide log?
-  if (params.get("hideLog") === "1") {
-    const wrap = logEl?.parentElement;
-    if (wrap) wrap.style.display = "none";
+  // Hide status log if requested
+  if (params.get('hideLog') === '1') {
+    const logEl = document.getElementById('status');
+    const logHdr = document.querySelector('h3'); // the "Status" header
+    if (logEl) logEl.style.display = 'none';
+    if (logHdr) logHdr.style.display = 'none';
   }
 
   // Loop default?
