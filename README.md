@@ -168,3 +168,26 @@ Everything else you already had (BPM detection, URL xml, range flags, autoplay, 
 | `fit`          | `fit=1`                              | Forces an auto-fit to the notes even if a strict `low/high` was set. Handy if you want a one-off “fit to excerpt” view.                                                      |
 
 ---
+
+| Flag       | Example                                          | What it does                                                                                                                        |
+| ---------- | ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `xml`      | `xml=https%3A%2F%2Fexample.com%2Fscore.musicxml` | Loads a MusicXML file from a URL. Use URL-encoding. `.xml/.musicxml` recommended. `.mxl` displays but won’t drive playback parsing. |
+| `bpm`      | `bpm=120`                                        | Sets initial tempo. If omitted, we try to read tempo from the MusicXML; otherwise default 100.                                      |
+| `autoplay` | `autoplay=1`                                     | Attempts to start playback automatically after loading (may be blocked by browser’s autoplay policy). Default: off.                 |
+
+---
+
+| Flag      | Example     | What it does                                          |
+| --------- | ----------- | ----------------------------------------------------- |
+| `loop`    | `loop=1`    | Pre-checks the Loop toggle. Default: off.             |
+| `hideLog` | `hideLog=1` | Hides the status log panel and silences log messages. |
+
+---
+
+| Flag        | Example          | What it does                                              |
+| ----------- | ---------------- | --------------------------------------------------------- |
+| `scoreFit`  | `scoreFit=1`     | Fits the score to the container width. Re-fits on resize. |
+| `scoreZoom` | `scoreZoom=1.25` | Explicit zoom (overrides `scoreFit`). Range ~0.1–5.       |
+
+---
+
