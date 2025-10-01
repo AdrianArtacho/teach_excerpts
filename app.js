@@ -7,6 +7,21 @@
 
   const params = new URLSearchParams(location.search);
 
+  // ---------- Title via URL (keeps the emoji if present in HTML) ----------
+  (() => {
+    const params = new URLSearchParams(location.search);
+    const t = params.get('title');
+    if (!t) return;
+    // Replace just the text part inside the H1
+    const titleTextEl = document.getElementById('titleText');
+    if (titleTextEl) titleTextEl.textContent = t;
+    // Also update the <title> of the document
+    document.title = `🎹 ${t}`;
+  })();
+
+
+
+
   // After: const params = new URLSearchParams(location.search);
   (() => {
     const t = params.get('title');
