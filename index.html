@@ -1,36 +1,22 @@
 <!DOCTYPE html>
-<html lang="de">
+<html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Visualizer – Roll ↑ | Score ↔ | Keyboard ↓ + MusicXML BPM</title>
-  <link rel="stylesheet" href="./style.css?v=20251001" />
-  <link rel="icon" type="image/x-icon" href="./favicon.ico">
+  <title>Visualizer</title>
+  <link rel="icon" type="image/x-icon" href="./favicon.ico" />
 
-  <!-- (Optional) Magenta MIDI helpers -->
-  <script type="module">
-    try {
-      const core = await import('./core.js?v=20251001');
-      // const midi = await import('./midi_io.js?v=20251001');
-      window.mm = { ...core, ...midi };
-    } catch (e) {
-      console.warn('Magenta modules not loaded (ok for MusicXML-only).', e);
-    }
-  </script>
+  <!-- CSS -->
+  <link rel="stylesheet" href="./style.css?v=1.0.0">
 
-  <!-- Local copies -->
-  <script defer src="./opensheetmusicdisplay.min.js?v=20251001"></script>
-  <script defer src="./all-around-keyboard.min.js?v=20251001"></script>
-
-  <!-- App code -->
-  <script defer src="./app.js?v=20251001"></script>
+  <!-- Required scripts -->
+  <script defer src="./opensheetmusicdisplay.min.js?v=1.0.0"></script>
+  <script defer src="./all-around-keyboard.min.js?v=1.0.0"></script>
+  <script defer src="./app.js?v=1.0.0"></script>
 </head>
 <body>
-  <!-- Title is replaceable via ?title=... (emoji stays) -->
-  <h1 id="titleLine">🎹 <span id="titleText">Visualizer – Roll ↑ | Score ↔ | Keyboard ↓</span></h1>
-
-  <div class="card" id="dropZone">
-    <!-- Controls (no visible XML button now) -->
+  <h1 id="titleLine">🎹 <span id="titleText">Visualizer</span></h1>
+  <div class="card">
+    <!-- Controls / Score / Keyboard / Status are all handled in app.js -->
     <div class="row">
       <button id="play" disabled>Play</button>
       <button id="stop" disabled>Stop</button>
@@ -39,17 +25,10 @@
       <input id="bpm" type="range" min="30" max="240" step="1" value="100">
       <button id="testTone">🔊 Test Tone</button>
       <button id="panic">⏹ Panic</button>
-      <!-- Hidden file input kept for “just in case” (trigger via keyboard ‘o’ or click the roll) -->
-      <input id="xmlFile" type="file" accept=".musicxml,.xml,.mxl" style="display:none">
     </div>
 
-    <!-- ORDER: Roll (top) -->
     <canvas id="roll"></canvas>
-
-    <!-- Score (middle) -->
-    <div id="osmd"><p class="small">Tipp: Ziehe eine MusicXML-Datei hierher (oder drücke “o”), um sie zu laden.</p></div>
-
-    <!-- Keyboard (bottom) -->
+    <div id="osmd"><p class="small">Lade eine MusicXML-Datei, um die Notenschrift zu sehen.</p></div>
     <all-around-keyboard id="kb" octaves="2" width="900" depth="120"></all-around-keyboard>
 
     <h3>Status</h3>
