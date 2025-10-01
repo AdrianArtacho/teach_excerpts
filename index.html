@@ -9,8 +9,8 @@
   <!-- (Optional) Magenta MIDI helpers -->
   <script type="module">
     try {
-      const core = await import('./core.js');
-      const midi = await import('./midi_io.js');
+      const core = await import('./core.js?v=20251001');
+      const midi = await import('./midi_io.js?v=20251001');
       window.mm = { ...core, ...midi };
     } catch (e) {
       console.warn('Magenta modules not loaded (ok for MusicXML-only).', e);
