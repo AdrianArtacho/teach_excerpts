@@ -1,128 +1,129 @@
-# Interactive Excerpts
+Perfect 👍 I’ve looked at both of your README files (`README.md` and `README2.md`). They’re overlapping a lot — one is more about **installation/hosting** and the other more about **URL flags**.
 
-The idea is to show little music excerpts in ways the kids can practice at home.
+Here’s what I propose:
+
+* **One single README** that has both:
+
+  1. A short intro & hosting instructions.
+  2. A clean, table-based section of all URL flags (with clickable links using your base URL).
+
+I’ll merge them for you, keep the tables from `README.md`, and also integrate the clear explanations/examples from `README2.md` (like `titleFull`).
 
 ---
 
-PYTHON
+# 🎹 MusicXML/MIDI Visualizer – Interactive Excerpts
+
+This app displays a piano roll, score (via OSMD), and an interactive keyboard.
+It supports playback, note highlighting, and several configuration options via URL flags.
+
+👉 Live demo:
+[https://adrianartacho.github.io/teach_excerpts/?xml=./scores/alors0.musicxml&title=Alors%20On%20Danse](https://adrianartacho.github.io/teach_excerpts/?xml=./scores/alors0.musicxml&title=Alors%20On%20Danse)
+
+---
+
+## 🚀 Run locally
+
+**Python**
 
 ```bash
 python3 -m http.server 5500
 ```
 
-then open:
-http://localhost:5500/yourfile.html
-
-NODE.JS
+Then open:
 
 ```
+http://localhost:5500/index.html
+```
+
+**Node.js**
+
+```bash
 npx serve .
 ```
 
 ---
 
-## Load piece with URL
+## 📂 Hosting notes
 
-/your-page.html?xml=https://example.com/path/your-piece.musicxml&autoplay=1
-
-Example:
-
-/alter31.html?xml=excerpt0.musicxml&autoplay=1
-
-## Set keyboard ranges:
-
-/your-page.html?xml=https://example.com/piece.musicxml&low=C3&high=G5&rangeStrict=1
-
-Example:
-
-/alter31.html?xml=excerpt0.musicxml&low=C3&high=G5&rangeStrict=1
-
-MIDI numbers: ?low=48&high=72
-
-Note names: ?low=C3&high=G5, ?low=F#2&high=Eb5
-
-Strict range (default): &rangeStrict=1 → exactly this window (snapped to octaves)
-
-Flexible baseline: &rangeStrict=0 → at least this; auto-fit may expand
-
-Force auto-fit even if a range was given: &fit=1
-
-Examples
-
-Exact 4-octave window C3–B6:
-
-?page.html?xml=...&low=C3&high=B6&rangeStrict=1
-
-
-Baseline C3–G5, but expand if needed:
-
-?page.html?xml=...&low=C3&high=G5&rangeStrict=0
-
-
-Ignore any provided range and auto-fit to notes:
-
-?page.html?xml=...&fit=1
+* Keep XML/MIDI files in the same domain to avoid CORS.
+  Example: `/scores/alors0.musicxml` → `?xml=./scores/alors0.musicxml`
+* For cross-domain hosting, the server must send `Access-Control-Allow-Origin: *`.
 
 ---
 
-## Titling
+## 🔧 URL Flags
 
-Examples
+You can configure behavior by adding query parameters.
+Base URL to use for examples:
 
-Custom title text (keeps emoji):
-?title=My%20Lovely%20Excerpt
-
-Full title override (you provide everything, including emoji/HTML):
-?title=<span>🎼%20Bach%20Invention%20No.%201</span>&titleFull=1
-
-Load a score and show a custom title:
-?xml=https://example.com/piece.musicxml&title=Beispiel%20Stücke
+```
+https://adrianartacho.github.io/teach_excerpts/?xml=./scores/alors0.musicxml
+```
 
 ---
 
-Query parameters you can use
+### 🎼 File loading
 
-?xml=URL or ?midi=URL
-
-?title=Custom%20Title
-
-?bpm=120
-
-?low=C3&high=G5 (also accepts MIDI numbers)
-
-?rangeStrict=0 (let auto-fit expand beyond your low/high if needed)
-
-?fit=1 (force fit-to-notes)
-
-?autoplay=1 (subject to browser gesture rules)
+| Flag         | Example                                                                                         | Description                                                                                             |
+| ------------ | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `xml`        | [link](https://adrianartacho.github.io/teach_excerpts/?xml=./scores/alors0.musicxml)            | Load a MusicXML file. `.xml/.musicxml` recommended. `.mxl` will display but not drive playback parsing. |
+| `midi`       | [link](https://adrianartacho.github.io/teach_excerpts/?midi=./scores/example.mid)               | Load a MIDI file.                                                                                       |
+| `autoplay=1` | [link](https://adrianartacho.github.io/teach_excerpts/?xml=./scores/alors0.musicxml&autoplay=1) | Attempt to start playback automatically (may be blocked by browser).                                    |
 
 ---
 
-Notes:
+### ⏱ Tempo
 
-Keep XML files in the same domain (e.g., /scores/alors0.xml). Then ?xml=./scores/alors0.xml avoids cross-origin/CORS altogether.
-
-If you do cross-origin later, the other host must send Access-Control-Allow-Origin: * (or your domain).
-
----
-
-This is the default URL (served by GitHub):
-
-https://adrianartacho.github.io/teach_excerpts/
-
-Example:
-
-https://adrianartacho.github.io/teach_excerpts/?xml=./scores/alors0.musicxml&title=Alors%20On%20Danse
-
-All your existing URL flags continue to work (low, high, bpm, autoplay, fit, rangeStrict, and the title override that keeps the emoji).
+| Flag      | Example                                                                                      | Description                                                                     |
+| --------- | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| `bpm=120` | [link](https://adrianartacho.github.io/teach_excerpts/?xml=./scores/alors0.musicxml&bpm=120) | Override playback tempo. Otherwise, tempo is read from file or defaults to 100. |
 
 ---
 
-## How to embed
+### 🎹 Keyboard & Range
+
+| Flag              | Example                                                                                                           | Description                                                                                                                         |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `low` + `high`    | [link](https://adrianartacho.github.io/teach_excerpts/?xml=./scores/alors0.musicxml&low=C3&high=G5)               | Sets the visible keyboard window. Accepts MIDI numbers or note names (`C3`, `G5`, `F#2`, etc.).                                     |
+| `rangeStrict=0`   | [link](https://adrianartacho.github.io/teach_excerpts/?xml=./scores/alors0.musicxml&low=C3&high=G5&rangeStrict=0) | Allows auto-fit to expand the range if needed.                                                                                      |
+| `fit=1`           | [link](https://adrianartacho.github.io/teach_excerpts/?xml=./scores/alors0.musicxml&fit=1)                        | Force auto-fit to notes, ignoring provided range.                                                                                   |
+| `transposeVis=12` | [link](https://adrianartacho.github.io/teach_excerpts/?xml=./scores/alors0.musicxml&transposeVis=12)              | Shifts the **keyboard visualization** (lights + keys) by semitones. Piano roll & audio stay true pitch. Negative values shift down. |
+
+---
+
+### ▶ Playback
+
+| Flag     | Example                                                                                     | Description                       |
+| -------- | ------------------------------------------------------------------------------------------- | --------------------------------- |
+| `loop=1` | [link](https://adrianartacho.github.io/teach_excerpts/?xml=./scores/alors0.musicxml&loop=1) | Loop playback enabled by default. |
+| `loop=0` | Default                                                                                     | Loop disabled.                    |
+
+---
+
+### 🖥 UI
+
+| Flag             | Example                                                                                             | Description                                            |
+| ---------------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| `hideLog=1`      | [link](https://adrianartacho.github.io/teach_excerpts/?xml=./scores/alors0.musicxml&hideLog=1)      | Hides the status log panel.                            |
+| `scoreFit=1`     | [link](https://adrianartacho.github.io/teach_excerpts/?xml=./scores/alors0.musicxml&scoreFit=1)     | Fits the score to container width (re-fits on resize). |
+| `scoreZoom=1.25` | [link](https://adrianartacho.github.io/teach_excerpts/?xml=./scores/alors0.musicxml&scoreZoom=1.25) | Explicit zoom factor (overrides `scoreFit`).           |
+
+---
+
+### 📛 Title
+
+| Flag                                        | Example                                                                                                                        | Description                                     |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------- |
+| `title=Alors%20On%20Danse`                  | [link](https://adrianartacho.github.io/teach_excerpts/?xml=./scores/alors0.musicxml&title=Alors%20On%20Danse)                  | Replaces the text part of the title (🎹 stays). |
+| `titleFull=1&title=🎵%20Alors%20On%20Danse` | [link](https://adrianartacho.github.io/teach_excerpts/?xml=./scores/alors0.musicxml&titleFull=1&title=🎵%20Alors%20On%20Danse) | Overrides the entire `<h1>` including emoji.    |
+
+---
+
+## 📥 Embedding
 
 ```html
 <iframe
-  src="https://AdrianArtacho.github.io/teach_excerpts/?xml=./scores/alors0.musicxml&title=Alors%20On%20Danse&autoplay=1"
+  src="https://adrianartacho.github.io/teach_excerpts/?xml=./scores/alors0.musicxml&title=Alors%20On%20Danse&autoplay=1"
   width="110%"
   height="1000"
   style="border:0; max-width:1000px; width:100%; display:block; margin:0 auto;"
@@ -131,63 +132,7 @@ All your existing URL flags continue to work (low, high, bpm, autoplay, fit, ran
 ></iframe>
 ```
 
-Embed example:
-
-https://www.artacho.at/elemu/
-
 ---
 
-Quick usage notes
-
-Fit score to width
-?scoreFit=1
-(re-fits on resize/embedding; uses a two-pass render)
-
-Explicit score zoom (overrides fit):
-?scoreZoom=1.2
-
-Transpose visuals only (keyboard + lights):
-?transposeVis=12 (or -12, etc.)
-Audio & piano-roll stay at real pitch.
-
-Loop default on:
-?loop=1
-
-Hide status log:
-?hideLog=1
-
-Everything else you already had (BPM detection, URL xml, range flags, autoplay, panic, test tone) keeps working.
-
----
-
-| Flag           | Example                              | What it does                                                                                                                                                                 |
-| -------------- | ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `transposeVis` | `transposeVis=12`                    | Shifts the **keyboard & key lighting only** by semitones. Piano-roll drawing and audio remain at real pitch. Use negative values to shift down (e.g., `-12`).                |
-| `low` + `high` | `low=C3&high=G5` or `low=48&high=79` | Sets a **strict** keyboard window (snapped to octaves). Accepts MIDI numbers or note names (`C#4`, `Bb2`, etc.). By default, this prevents auto-fit from changing the range. |
-| `rangeStrict`  | `rangeStrict=0`                      | If you provide `low/high` and also want auto-fit to **expand** the keyboard if needed, set `rangeStrict=0`. With `1` (default), the given range is kept.                     |
-| `fit`          | `fit=1`                              | Forces an auto-fit to the notes even if a strict `low/high` was set. Handy if you want a one-off “fit to excerpt” view.                                                      |
-
----
-
-| Flag       | Example                                          | What it does                                                                                                                        |
-| ---------- | ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `xml`      | `xml=https%3A%2F%2Fexample.com%2Fscore.musicxml` | Loads a MusicXML file from a URL. Use URL-encoding. `.xml/.musicxml` recommended. `.mxl` displays but won’t drive playback parsing. |
-| `bpm`      | `bpm=120`                                        | Sets initial tempo. If omitted, we try to read tempo from the MusicXML; otherwise default 100.                                      |
-| `autoplay` | `autoplay=1`                                     | Attempts to start playback automatically after loading (may be blocked by browser’s autoplay policy). Default: off.                 |
-
----
-
-| Flag      | Example     | What it does                                          |
-| --------- | ----------- | ----------------------------------------------------- |
-| `loop`    | `loop=1`    | Pre-checks the Loop toggle. Default: off.             |
-| `hideLog` | `hideLog=1` | Hides the status log panel and silences log messages. |
-
----
-
-| Flag        | Example          | What it does                                              |
-| ----------- | ---------------- | --------------------------------------------------------- |
-| `scoreFit`  | `scoreFit=1`     | Fits the score to the container width. Re-fits on resize. |
-| `scoreZoom` | `scoreZoom=1.25` | Explicit zoom (overrides `scoreFit`). Range ~0.1–5.       |
-
----
-
+👉 That’s the merged README.
+Would you like me to also add a **"Quick flag cheat sheet"** at the very top (like a one-liner for each)?
