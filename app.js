@@ -24,6 +24,8 @@
     logEl.scrollTop = logEl.scrollHeight;
   };
   const params = new URLSearchParams(location.search);
+  // --- Visual transpose flag (default 0) ---
+  const TRANSPOSE_VIS = Number(params.get('transposeVis')) || 0;
 
   // Title
   (function applyTitleFromURL() {
