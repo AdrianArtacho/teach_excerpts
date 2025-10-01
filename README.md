@@ -1,16 +1,3 @@
-Perfect 👍 I’ve looked at both of your README files (`README.md` and `README2.md`). They’re overlapping a lot — one is more about **installation/hosting** and the other more about **URL flags**.
-
-Here’s what I propose:
-
-* **One single README** that has both:
-
-  1. A short intro & hosting instructions.
-  2. A clean, table-based section of all URL flags (with clickable links using your base URL).
-
-I’ll merge them for you, keep the tables from `README.md`, and also integrate the clear explanations/examples from `README2.md` (like `titleFull`).
-
----
-
 # 🎹 MusicXML/MIDI Visualizer – Interactive Excerpts
 
 This app displays a piano roll, score (via OSMD), and an interactive keyboard.
