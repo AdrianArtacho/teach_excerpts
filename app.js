@@ -57,11 +57,30 @@
   if (scoreZoomOverride != null) log('🎼 scoreZoom override:', scoreZoomOverride);
 
   // --- Transpose visuals only (keyboard + lighting), sound & roll keep real pitch
-  const transposeVis = (() => {
-    const t = params.get('transposeVis');
-    return t && !isNaN(+t) ? Math.round(+t) : 0;
-  })();
-  if (transposeVis !== 0) log('🎚 transposeVis:', transposeVis, '(visual only)');
+  // ---------- Keyboard & Roll ranges / mapping ----------
+  // Keyboard (visual) — affected by transposeVis and URL 'low/high' (leftmostKey)
+  let KEY_LOWEST = 60;
+  let KEY_TOTAL  = 12 * (parseInt(kb.getAttribute('octaves')) || MIN_OCTAVES);
+  const getLeftmostIndex = () => Number(kb.getAttribute('leftmostKey') || 48);
+  const setLeftmostIndex = (idx) => kb.setAttribute('leftmostKey', String(Math.max(0, Math.round(idx))));
+
+  // Roll (real) — true pitches, never transposed visually
+  let ROLL_LOWEST = 60;
+  let ROLL_TOTAL  = KEY_TOTAL; // good initial guess
+
+  // Component layout: emitted MIDI = 24 + index (C1 base)
+  // const MIDI_BASE_FOR_LAYOUT = 24;
+
+  // Visual mapping helpers
+  function visualToAudioMidi(midiVis) { return midiVis - transposeVis; }  // lights → sound
+  function audioToVisualMidi(midiReal){ return midiReal + transposeVis; } // sound → lights
+
+  // Where to light a given REAL MIDI note on the visually transposed keyboard
+  function indexFromMidiVisual(midiReal){
+    const midiVis = audioToVisualMidi(midiReal);
+    return getLeftmostIndex() + (midiVis - KEY_LOWEST);
+  }
+
 
   // --- Loop default via URL
   const loopDefault = (() => {
