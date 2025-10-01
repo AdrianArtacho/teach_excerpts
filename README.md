@@ -157,3 +157,14 @@ Hide status log:
 ?hideLog=1
 
 Everything else you already had (BPM detection, URL xml, range flags, autoplay, panic, test tone) keeps working.
+
+---
+
+| Flag           | Example                              | What it does                                                                                                                                                                 |
+| -------------- | ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `transposeVis` | `transposeVis=12`                    | Shifts the **keyboard & key lighting only** by semitones. Piano-roll drawing and audio remain at real pitch. Use negative values to shift down (e.g., `-12`).                |
+| `low` + `high` | `low=C3&high=G5` or `low=48&high=79` | Sets a **strict** keyboard window (snapped to octaves). Accepts MIDI numbers or note names (`C#4`, `Bb2`, etc.). By default, this prevents auto-fit from changing the range. |
+| `rangeStrict`  | `rangeStrict=0`                      | If you provide `low/high` and also want auto-fit to **expand** the keyboard if needed, set `rangeStrict=0`. With `1` (default), the given range is kept.                     |
+| `fit`          | `fit=1`                              | Forces an auto-fit to the notes even if a strict `low/high` was set. Handy if you want a one-off “fit to excerpt” view.                                                      |
+
+---
