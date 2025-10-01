@@ -6,6 +6,20 @@
   const statusEl = $('#status');
 
   const params = new URLSearchParams(location.search);
+
+  // After: const params = new URLSearchParams(location.search);
+  (() => {
+    const t = params.get('title');
+    if (!t) return;
+    // Update the H1 (keeps the emoji if your HTML has it)
+    const titleTextEl = document.getElementById('titleText');
+    if (titleTextEl) titleTextEl.textContent = t;
+    // Also update the browser tab title (optional but nice)
+    document.title = `🎹 ${t}`;
+  })();
+
+
+
   const hideLog = params.get('hideLog') === '1';
 
   function log(...a) {
