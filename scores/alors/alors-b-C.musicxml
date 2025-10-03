@@ -164,6 +164,11 @@
     <dot />
     <stem>up</stem>
     <staff>1</staff>
+    <notations>
+        <articulations placement="above">
+            <staccato/>
+        </articulations>
+    </notations>
    </note>
    <note color="#000000" default-x="300" default-y="-5">
     <pitch>
