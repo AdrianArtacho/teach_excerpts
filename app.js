@@ -1,4 +1,5 @@
-/* app.js — player with OSMD, piano roll, visual transpose, score cursor (show on play), and URL flags */
+/* app.js — player with OSMD, piano roll, visual transpose, global audio transpose,
+   score cursor (show on play), BPM override, loop/hideLog/title flags, and URL loading. */
 
 (() => {
   // ---------- Utilities ----------
@@ -18,7 +19,8 @@
   const urlBPM         = params.get('bpm');                   // number
   const urlLoop        = params.get('loop') === '1';          // default off
   const urlHideLog     = params.get('hideLog') === '1';       // hide status block
-  const transposeVis   = parseInt(params.get('transposeVis') || '0', 10) || 0; // semitones (visual only)
+  const transposeVis   = parseInt(params.get('transposeVis') || '0', 10) || 0;  // visual-only semitones
+  const transposeAudio = parseInt(params.get('transposeAudio') || '0', 10) || 0; // GLOBAL audio semitones
   const highlightScore = params.get('highlightScore') === '1';
   const titleParam     = params.get('title');
 
@@ -41,10 +43,9 @@
   const kb       = $('#kb');
   const rollCv   = $('#roll');
   const ctx      = rollCv?.getContext('2d');
-  const osmdHost = $('#osmd');
 
   // Guard if essentials missing
-  if (!playBtn || !stopBtn || !bpmInput || !bpmVal || !kb || !rollCv || !ctx || !osmdHost) {
+  if (!playBtn || !stopBtn || !bpmInput || !bpmVal || !kb || !rollCv || !ctx || !$('#osmd')) {
     console.error('Required elements not found in the page.');
     return;
   }
@@ -106,23 +107,27 @@
     osc.connect(gain).connect(audio.master);
     return { osc, gain };
   }
+  function clampMidi(m) { return Math.min(127, Math.max(0, Math.round(m))); }
+
   function noteOn(midi, vel = 0.8) {
     if (!audio.ctx) audioInit();
     audio.ctx.resume?.();
-    if (audio.voices.has(midi)) return;
-    const v = mkVoice(midiToFreq(midi), vel);
+    const mClamped = clampMidi(midi);
+    if (audio.voices.has(mClamped)) return;
+    const v = mkVoice(midiToFreq(mClamped), vel);
     v.osc.start();
-    audio.voices.set(midi, v);
+    audio.voices.set(mClamped, v);
   }
   function noteOff(midi) {
     if (!audio.ctx) return;
-    const v = audio.voices.get(midi);
+    const mClamped = clampMidi(midi);
+    const v = audio.voices.get(mClamped);
     if (!v) return;
     const t = audio.ctx.currentTime;
     v.gain.gain.cancelScheduledValues(t);
     v.gain.gain.setTargetAtTime(0.0001, t, 0.03);
     v.osc.stop(t + 0.08);
-    setTimeout(() => audio.voices.delete(midi), 120);
+    setTimeout(() => audio.voices.delete(mClamped), 120);
   }
   function clearScheduledAudio() {
     if (!audio.ctx) return;
@@ -152,42 +157,43 @@
   }
   const isValidMidi = (m) => Number.isInteger(m) && m >= 0 && m <= 127;
 
-  // Manual key → sound (compensate transposeVis so perceived pitch matches score)
+  // Manual key → sound:
+  //   - compensate visual transpose so manual pitch matches the score
+  //   - then apply global audio transpose so we hear the transposition
   kb.addEventListener('noteon', (e) => {
     const m = midiFromKbEvent(e);
     if (!isValidMidi(m)) return;
-    const soundMidi = m - transposeVis; // inverse shift
+    const soundMidi = clampMidi(m - transposeVis + transposeAudio);
     noteOn(soundMidi, 0.7);
   });
   kb.addEventListener('noteoff', (e) => {
     const m = midiFromKbEvent(e);
     if (!isValidMidi(m)) return;
-    const soundMidi = m - transposeVis;
+    const soundMidi = clampMidi(m - transposeVis + transposeAudio);
     noteOff(soundMidi);
   });
-  // Some builds emit noteOff with different case:
   kb.addEventListener('noteOff', (e) => {
     const m = midiFromKbEvent(e);
     if (!isValidMidi(m)) return;
-    const soundMidi = m - transposeVis;
+    const soundMidi = clampMidi(m - transposeVis + transposeAudio);
     noteOff(soundMidi);
   });
   kb.addEventListener('keypress', (e) => {
     const m = midiFromKbEvent(e);
     if (!isValidMidi(m)) return;
-    const soundMidi = m - transposeVis;
+    const soundMidi = clampMidi(m - transposeVis + transposeAudio);
     noteOn(soundMidi, 0.7);
   });
   kb.addEventListener('keyrelease', (e) => {
     const m = midiFromKbEvent(e);
     if (!isValidMidi(m)) return;
-    const soundMidi = m - transposeVis;
+    const soundMidi = clampMidi(m - transposeVis + transposeAudio);
     noteOff(soundMidi);
   });
 
-  // ---------- Keyboard lighting ----------
+  // ---------- Keyboard lighting (visual only) ----------
   function indexFromMidiVisual(m) {
-    // Visual-only transpose
+    // Visual-only transpose affects which keys light up
     const midiVis = m + transposeVis;
     return getLeftmostIndex() + (midiVis - LOWEST_PITCH);
   }
@@ -201,6 +207,11 @@
   }
 
   // ---------- OSMD ----------
+  let osmd = null;
+  let osmdHost = $('#osmd');
+  let scoreCursorReady = false;
+  let scoreCursorShown = false;
+
   async function renderXML(text) {
     if (!window.opensheetmusicdisplay) throw new Error('OSMD script not loaded.');
     if (!osmd) osmd = new opensheetmusicdisplay.OpenSheetMusicDisplay('osmd', { drawingParameters: 'compact' });
@@ -208,10 +219,9 @@
     await osmd.render();
 
     if (highlightScore && osmd.cursor) {
-      // NEW: initialize cursor silently (do NOT show at load)
+      // Initialize cursor silently (hidden until Play)
       try {
         if (typeof osmd.cursor.hide === 'function') osmd.cursor.hide();
-        // Mark cursor as available but hidden; we'll show on play()
         scoreCursorReady = true;
         scoreCursorShown = false;
         log('🎯 Score highlight: cursor ready (hidden until Play).');
@@ -230,7 +240,6 @@
     if (!highlightScore || !scoreCursorReady || !osmd?.cursor) return;
     if (!scoreCursorShown) {
       try {
-        // Show and reset to beginning first time we start
         osmd.cursor.show();
         if (typeof osmd.cursor.reset === 'function') osmd.cursor.reset();
         scoreCursorShown = true;
@@ -447,20 +456,22 @@
       const d = Math.max(0, (n.qEnd - n.qStart) * secondsPerQuarter());
       if (d <= 0) continue;
 
-      const v = mkVoice(midiToFreq(n.p), 0.22);
+      // AUDIO: apply global transposeAudio only (roll/score stay true)
+      const playMidi = clampMidi(n.p + transposeAudio);
+      const v = mkVoice(midiToFreq(playMidi), 0.22);
       v.osc.start(startBase + s);
       v.gain.gain.setValueAtTime(0.22, startBase + s + Math.max(0.01, d - 0.03));
       v.gain.gain.setTargetAtTime(0.0001, startBase + s + Math.max(0.01, d - 0.03), 0.02);
       v.osc.stop(startBase + s + d + 0.03);
       audio.scheduled.push(v);
 
-      // Visual lights: transpose visually only
+      // VISUAL LIGHTS: use raw score midi + transposeVis (handled inside lightMidi/dimMidi)
       setTimeout(() => lightMidi(n.p), Math.max(0, (startBase + s - audio.ctx.currentTime)) * 1000);
       setTimeout(() => dimMidi(n.p),   Math.max(0, (startBase + s + d - audio.ctx.currentTime)) * 1000);
 
       count++;
     }
-    log(`🎼 Scheduled ${count} notes @ BPM ${currentBPM()}`);
+    log(`🎼 Scheduled ${count} notes @ BPM ${currentBPM()} (transposeAudio=${transposeAudio})`);
   }
 
   // ---------- Transport ----------
@@ -469,7 +480,7 @@
     playing = true;
     startedAt = performance.now() / 1000;
 
-    // NEW: show score cursor only now (not during load)
+    // show score cursor only now (not during load)
     if (highlightScore && scoreCursorReady) {
       try {
         ensureCursorShownAt(0);
@@ -485,7 +496,7 @@
     rafId = null;
     clearScheduledAudio();
     panicAll();
-    hideCursor();                 // NEW: hide cursor when stopped
+    hideCursor();                 // hide cursor when stopped
     drawRoll();                   // clear playhead
   }
   function tick() {
@@ -549,8 +560,6 @@
 
     const has = notesQ.length > 0;
     playBtn.disabled = stopBtn.disabled = !has;
-
-    // No autoplay by default
   }
 
   playBtn.addEventListener('click', start);
