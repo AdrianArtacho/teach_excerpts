@@ -164,11 +164,6 @@
     <dot />
     <stem>up</stem>
     <staff>1</staff>
-    <notations>
-        <articulations placement="above">
-            <staccato/>
-        </articulations>
-    </notations>
    </note>
    <note color="#000000" default-x="300" default-y="-5">
     <pitch>
@@ -182,11 +177,6 @@
     <type>eighth</type>
     <stem>up</stem>
     <staff>1</staff>
-    <notations>
-        <articulations placement="above">
-            <staccato/>
-        </articulations>
-    </notations>
    </note>
    <note color="#000000" default-x="386" default-y="-5">
     <pitch>
@@ -201,11 +191,6 @@
     <dot />
     <stem>up</stem>
     <staff>1</staff>
-    <notations>
-        <articulations placement="above">
-            <staccato/>
-        </articulations>
-    </notations>
    </note>
    <note color="#000000" default-x="546" default-y="-5">
     <pitch>
@@ -258,11 +243,6 @@
     <stem>up</stem>
     <staff>1</staff>
     <beam number="1">end</beam>
-    <notations>
-        <articulations placement="above">
-            <staccato/>
-        </articulations>
-    </notations>
    </note>
    <note default-x="186">
     <rest />
@@ -283,11 +263,6 @@
     <type>16th</type>
     <stem>up</stem>
     <staff>1</staff>
-    <notations>
-        <articulations placement="above">
-            <staccato/>
-        </articulations>
-    </notations>
    </note>
    <note default-x="318">
     <rest />
@@ -296,11 +271,6 @@
     <voice>1</voice>
     <type>eighth</type>
     <staff>1</staff>
-    <notations>
-        <articulations placement="above">
-            <staccato/>
-        </articulations>
-    </notations>
    </note>
    <note color="#000000" default-x="404" default-y="-10">
     <pitch>
@@ -314,11 +284,6 @@
     <dot />
     <stem>up</stem>
     <staff>1</staff>
-    <notations>
-        <articulations placement="above">
-            <staccato/>
-        </articulations>
-    </notations>
    </note>
    <note color="#000000" default-x="564" default-y="-10">
     <pitch>
@@ -331,11 +296,6 @@
     <type>eighth</type>
     <stem>up</stem>
     <staff>1</staff>
-    <notations>
-        <articulations placement="above">
-            <staccato/>
-        </articulations>
-    </notations>
    </note>
    <barline location="right">
     <bar-style>light-heavy</bar-style>
