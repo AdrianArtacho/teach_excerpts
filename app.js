@@ -1,4 +1,5 @@
-/* app.js — Visualizer logic (BPM fixes + robust flags) */
+/* app.js — Correct BPM math (quarters → seconds), visual-only transpose, robust flags */
+
 const log = (...a) => {
   const el = document.getElementById('status');
   if (!el) return;
@@ -10,57 +11,40 @@ document.addEventListener('DOMContentLoaded', async () => {
   // ---------- URL params ----------
   const params = new URLSearchParams(location.search);
 
-  // Title flag (keeps the emoji, replaces text content)
+  // Title (keeps emoji, replaces text)
   const titleFlag = params.get('title');
   if (titleFlag) {
     const titleText = document.getElementById('titleText');
     if (titleText) titleText.textContent = titleFlag;
   }
 
-  // Hide log flag
-  if (params.get('hideLog') === '1') {
+  // Hide log
+  if ((params.get('hideLog') || params.get('hidelog')) === '1') {
     const logBlock = document.getElementById('status');
     if (logBlock) logBlock.style.display = 'none';
-    // hide the nearest "Status" heading if present
-    const logHeading = document.querySelector('h3');
-    if (logHeading && /status/i.test(logHeading.textContent)) logHeading.style.display = 'none';
+    const logHeading = [...document.querySelectorAll('h3')].find(h => /status/i.test(h.textContent));
+    if (logHeading) logHeading.style.display = 'none';
   }
 
-  // Loop default flag
+  // Loop default
   const loopCb = document.getElementById('loop');
-  if (loopCb && params.get('loop') === '1') {
-    loopCb.checked = true;
-  }
+  if (loopCb && params.get('loop') === '1') loopCb.checked = true;
 
-  // BPM control + flag precedence
-  let scoreBPM = 100;
+  // BPM
   const bpmSlider = document.getElementById('bpm');
   const bpmVal = document.getElementById('bpmVal');
   const bpmFromURL = params.get('bpm');
-  let bpmLockedByURL = false; // when true, XML detection won't override
+  let bpmLockedByURL = false;
+  let defaultBPM = 100; // used only to initialize the UI if nothing else provided
 
   if (bpmFromURL && Number(bpmFromURL) > 0) {
-    scoreBPM = Number(bpmFromURL);
-    bpmLockedByURL = true;
+    defaultBPM = Number(bpmFromURL);
+    bpmLockedByURL = true; // XML detection won't override
   }
-  // Initialize UI with current BPM
-  if (bpmSlider) bpmSlider.value = String(scoreBPM);
-  if (bpmVal) bpmVal.textContent = String(scoreBPM);
+  if (bpmSlider) bpmSlider.value = String(defaultBPM);
+  if (bpmVal) bpmVal.textContent = String(defaultBPM);
 
-  // Live-update BPM number + re-sync playback if running
-  function reapplyTempoWhilePlaying() {
-    if (!playing) return;
-    // stop() clears schedules; start() rebuilds them at new tempo
-    stop();
-    start();
-  }
-  bpmSlider?.addEventListener('input', (e) => {
-    const uiBpm = Number(e.target.value) || scoreBPM;
-    bpmVal.textContent = String(uiBpm);
-    reapplyTempoWhilePlaying();
-  });
-
-  // Visual transpose (keyboard lights + manual keys), audio unchanged for XML
+  // Visual transpose
   const transposeVis = parseInt(params.get('transposeVis') || '0', 10);
 
   // ---------- UI ----------
@@ -72,17 +56,24 @@ document.addEventListener('DOMContentLoaded', async () => {
   const rollCv = document.getElementById('roll');
   const ctx = rollCv.getContext('2d');
   const osmdDiv = document.getElementById('osmd');
-  if (osmdDiv) osmdDiv.innerHTML = ''; // remove placeholder text
+  if (osmdDiv) osmdDiv.innerHTML = ''; // remove placeholder
 
   if (window.customElements?.whenDefined) {
     try { await customElements.whenDefined('all-around-keyboard'); } catch {}
   }
 
   // ---------- State ----------
-  let notes = [];   // parsed from XML: {p,s,e}
-  let total = 0;
-  let playing = false, startedAt=0, t0=0, rafId=null;
+  // We store timing in QUARTER-NOTES:
+  //   n.qs = start in quarters, n.qe = end in quarters
+  let notes = [];         // [{p, qs, qe}]
+  let totalQ = 0;         // total duration in quarters
+  let playing = false, startedAt = 0, rafId = null;
   let scheduled = [], loopTimer=null, lightTimers=[];
+
+  // ---------- Helpers ----------
+  const currentBPM = () => Number(bpmSlider?.value) || defaultBPM;
+  const secPerQuarter = () => 60 / currentBPM();  // seconds for one quarter
+  const quartersPerSecond = () => currentBPM() / 60;
 
   // ---------- Audio ----------
   const audio = { ctx:null, master:null, voices:new Map() };
@@ -143,8 +134,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   panicBtn?.addEventListener('click', ()=>{ allNotesOff(); log('⏹ Panic: all voices stopped.'); });
 
   // ---------- Keyboard handling ----------
-  // Component emits: MIDI = 24 + index (C1 base)
-  const MIDI_BASE_FOR_LAYOUT = 24;
+  const MIDI_BASE_FOR_LAYOUT = 24; // C1
   function midiFromKbEvent(e) {
     let m = e?.detail?.midi ?? e?.detail?.note ?? e?.detail;
     if (typeof m === 'number' && Number.isFinite(m)) return Math.round(m);
@@ -154,23 +144,14 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
   const isValidMidi = m => Number.isInteger(m) && m >= 0 && m <= 127;
 
-  // Manual keys: apply inverse transpose for sound (visual is separate)
-  kb?.addEventListener('noteon', e => {
-    const m = midiFromKbEvent(e);
-    if (isValidMidi(m)) noteOn(m - transposeVis, 0.7);
-  });
+  // Manual keys: sound = (pressed - transposeVis) so audio stays true to score; lights are handled separately
+  kb?.addEventListener('noteon', e => { const m = midiFromKbEvent(e); if (isValidMidi(m)) noteOn(m - transposeVis, 0.7); });
   ['noteoff','noteOff','keyrelease'].forEach(ev=>{
-    kb?.addEventListener(ev, e => {
-      const m = midiFromKbEvent(e);
-      if (isValidMidi(m)) noteOff(m - transposeVis);
-    });
+    kb?.addEventListener(ev, e => { const m = midiFromKbEvent(e); if (isValidMidi(m)) noteOff(m - transposeVis); });
   });
-  kb?.addEventListener('keypress', e => {
-    const m = midiFromKbEvent(e);
-    if (isValidMidi(m)) noteOn(m - transposeVis, 0.7);
-  });
+  kb?.addEventListener('keypress', e => { const m = midiFromKbEvent(e); if (isValidMidi(m)) noteOn(m - transposeVis, 0.7); });
 
-  // Lighting helpers (apply transpose visually)
+  // Lighting helpers (visual transpose only)
   function lightMidi(m){ 
     const visMidi = m + transposeVis;
     const idx = visMidi - MIDI_BASE_FOR_LAYOUT;
@@ -182,100 +163,104 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (typeof kb?.keysDim === 'function') kb.keysDim([idx]);
   }
 
-  // ---------- Piano roll (fills container width) ----------
+  // ---------- Piano roll (width = container) ----------
   function drawRoll(){
     if (!rollCv) return;
     const pad=6, W=rollCv.clientWidth, H=rollCv.clientHeight;
     if (rollCv.width!==W||rollCv.height!==H){ rollCv.width=W; rollCv.height=H; }
     ctx.clearRect(0,0,W,H); ctx.fillStyle='#f3f5fb'; ctx.fillRect(0,0,W,H);
-    if (!notes.length||total<=0) return;
-    const secToX=s=>pad+(W-2*pad)*(s/total), keyH=(H-2*pad)/12;
+    if (!notes.length||totalQ<=0) return;
+    const qToX=q=>pad+(W-2*pad)*(q/totalQ), keyH=(H-2*pad)/12;
     ctx.fillStyle='#2f6fab';
     for(const n of notes){
-      const x=secToX(n.s), w=Math.max(2,secToX(n.e)-secToX(n.s)), y=H-pad-(n.p%12+1)*keyH;
+      const x=qToX(n.qs), w=Math.max(2,qToX(n.qe)-qToX(n.qs)), y=H-pad-(n.p%12+1)*keyH;
       ctx.fillRect(x,y,w,keyH-1);
     }
   }
-  function drawPlayhead(t){
-    if (!rollCv || total<=0) return; const pad=6;
-    const x=pad+(rollCv.width-2*pad)*(Math.min(t,total)/total);
+  function drawPlayhead(q){
+    if (!rollCv || totalQ<=0) return; const pad=6;
+    const x=pad+(rollCv.width-2*pad)*(Math.min(q,totalQ)/totalQ);
     ctx.strokeStyle='#e74c3c'; ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,rollCv.height); ctx.stroke();
   }
+  window.addEventListener('resize', drawRoll);
 
   // ---------- Scheduling ----------
   function clearLightingTimers(andDim=false){
     for (const id of lightTimers) clearTimeout(id);
     lightTimers.length = 0;
     if (andDim && typeof kb?.keysDim==='function') {
-      // dim a wide range to ensure clear; component will ignore out-of-range
       kb.keysDim([...Array(128).keys()]);
     }
   }
-  function scheduleNotesAtTempo(){
-    const uiBpm = Number(bpmSlider?.value) || scoreBPM; // current slider BPM
-    const scale = scoreBPM / uiBpm; // scoreSec → realSec
+  function scheduleNotes(){
+    const spq = secPerQuarter(); // seconds per quarter from LIVE UI BPM
     const startBase = audio.ctx.currentTime + 0.03;
     let count = 0;
     for (const n of notes) {
-      const s = n.s * scale;
-      const d = (n.e - n.s) * scale;
-      if (d <= 0) continue;
+      const sSec = n.qs * spq;
+      const dSec = (n.qe - n.qs) * spq;
+      if (dSec <= 0) continue;
 
       // Audio (true to XML pitches)
       const v = mkVoice(midiToFreq(n.p), 0.22);
-      v.osc.start(startBase + s);
-      v.gain.gain.setValueAtTime(0.22, startBase + s + Math.max(0.01, d - 0.03));
-      v.gain.gain.setTargetAtTime(0.0001, startBase + s + Math.max(0.01, d - 0.03), 0.02);
-      v.osc.stop(startBase + s + d + 0.03);
+      v.osc.start(startBase + sSec);
+      v.gain.gain.setValueAtTime(0.22, startBase + sSec + Math.max(0.01, dSec - 0.03));
+      v.gain.gain.setTargetAtTime(0.0001, startBase + sSec + Math.max(0.01, dSec - 0.03), 0.02);
+      v.osc.stop(startBase + sSec + dSec + 0.03);
       scheduled.push(v);
 
       // Lights (visually transposed)
-      const onDelaySec  = Math.max(0, (startBase + s)     - audio.ctx.currentTime);
-      const offDelaySec = Math.max(0, (startBase + s + d) - audio.ctx.currentTime);
+      const onDelaySec  = Math.max(0, (startBase + sSec)     - audio.ctx.currentTime);
+      const offDelaySec = Math.max(0, (startBase + sSec + dSec) - audio.ctx.currentTime);
       lightTimers.push(setTimeout(() => lightMidi(n.p), onDelaySec * 1000));
       lightTimers.push(setTimeout(() => dimMidi(n.p),   offDelaySec * 1000));
       count++;
     }
-    log(`🎼 Scheduled ${count} notes @ BPM ${uiBpm} (score BPM=${scoreBPM})`);
+    log(`🎼 Scheduled ${count} notes @ BPM ${currentBPM()}`);
 
-    const passDur = total * scale;
+    const passDurSec = totalQ * spq;
     if (loopCb?.checked) {
       loopTimer = setTimeout(() => {
-        t0 = 0; startedAt = performance.now()/1000;
-        clearLightingTimers(true);
-        scheduleNotesAtTempo();
-      }, Math.max(0, (passDur + 0.05) * 1000));
+        stop(); start(); // simplest reliable reloop with fresh BPM
+      }, Math.max(0, (passDurSec + 0.05) * 1000));
     }
   }
 
   function start(){
     if(!notes.length||playing) { if(!notes.length) log('⚠️ Keine Noten geladen.'); return; }
     audioInit(); audio.ctx.resume?.();
-    playing=true; startedAt=performance.now()/1000; t0=0;
-    scheduleNotesAtTempo();
+    playing=true; startedAt=performance.now()/1000;
+    scheduleNotes();
     rafId=requestAnimationFrame(tick);
   }
   function stop(){
-    playing=false; if(rafId) cancelAnimationFrame(rafId); rafId=null; t0=0;
-    // stop scheduled audio
+    playing=false; if(rafId) cancelAnimationFrame(rafId); rafId=null;
     for (const v of scheduled) { try { v.osc.stop(); } catch {} }
     scheduled.length = 0;
     clearLightingTimers(true); allNotesOff(); drawRoll();
     if (loopTimer) { clearTimeout(loopTimer); loopTimer=null; }
   }
+
+  // Playback clock in QUARTERS: qElapsed = secondsElapsed * (BPM/60)
   function tick(){
-    const uiBpm = Number(bpmSlider?.value) || scoreBPM;
-    const t = t0 + (performance.now()/1000 - startedAt) * (uiBpm/scoreBPM);
-    if(total>0 && t>=total) { 
+    const secondsElapsed = (performance.now()/1000 - startedAt);
+    const qElapsed = secondsElapsed * quartersPerSecond();
+    if(totalQ>0 && qElapsed>=totalQ) { 
       if(loopCb?.checked){ stop(); start(); return; } 
-      else { stop(); return; } 
+      else { stop(); return; }
     }
-    drawRoll(); drawPlayhead(Math.min(t,total));
+    drawRoll(); drawPlayhead(Math.min(qElapsed,totalQ));
     rafId=requestAnimationFrame(tick);
   }
 
   playBtn?.addEventListener('click', start);
   stopBtn?.addEventListener('click', stop);
+
+  // Live BPM slider
+  bpmSlider?.addEventListener('input', (e) => {
+    bpmVal.textContent = String(Number(e.target.value) || defaultBPM);
+    if (playing) { stop(); start(); } // re-sync schedules at new BPM
+  });
 
   // ---------- OSMD ----------
   let osmd=null;
@@ -285,16 +270,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     await osmd.render();
   }
 
-  // Detect BPM in MusicXML (used only if no ?bpm= set)
+  // Detect BPM from XML (only if no ?bpm=)
   async function detectTempoFromXMLText(text){
     try{
       const xml = new DOMParser().parseFromString(text, 'application/xml');
-      // 1) <sound tempo="...">
       const soundWithTempo = xml.querySelector('sound[tempo]');
       const tempoAttr = Number(soundWithTempo?.getAttribute('tempo'));
       if (Number.isFinite(tempoAttr) && tempoAttr > 0) return Math.round(tempoAttr);
 
-      // 2) <direction-type><metronome>...</metronome>
       const met = xml.querySelector('direction-type > metronome');
       if (met) {
         const perMin = Number(met.querySelector('per-minute')?.textContent);
@@ -312,36 +295,57 @@ document.addEventListener('DOMContentLoaded', async () => {
     return null;
   }
 
-  async function parseXML(text){
+  // Parse MusicXML to notes in QUARTERS
+  async function parseXMLtoQuarters(text){
     const xml=new DOMParser().parseFromString(text,"application/xml");
     const stepToSemitone={C:0,D:2,E:4,F:5,G:7,A:9,B:11};
-    let divisions=1;
-    const collected=[];
     const parts=[...xml.querySelectorAll("part")];
+    const out=[];
     for(const part of parts){
-      let time=0;
+      let divisions = 1;
+      let timeQ = 0; // in quarters
       for(const measure of part.querySelectorAll("measure")){
-        const d=measure.querySelector("divisions");
-        if(d) divisions=Number(d.textContent)||divisions;
-        for(const note of measure.querySelectorAll("note")){
-          if(note.querySelector("rest")){
-            const dur=Number(note.querySelector("duration")?.textContent||0)/divisions;
-            time+=dur; continue; 
+        const d = measure.querySelector("divisions");
+        if (d) divisions = Number(d.textContent) || divisions;
+        const qPerDiv = 1 / divisions;
+
+        for(const node of measure.children){
+          if (node.tagName === 'backup') {
+            const durDiv = Number(node.querySelector('duration')?.textContent || 0);
+            timeQ = Math.max(0, timeQ - durDiv * qPerDiv);
+            continue;
           }
-          const step=note.querySelector("step")?.textContent;
-          const alter=Number(note.querySelector("alter")?.textContent||0);
-          const oct=Number(note.querySelector("octave")?.textContent);
-          const dur=Number(note.querySelector("duration")?.textContent||0)/divisions;
-          if(step&&Number.isFinite(oct)){
-            const midi=12*(oct+1)+stepToSemitone[step]+alter;
-            collected.push({p:midi,s:time,e:time+dur});
+          if (node.tagName === 'forward') {
+            const durDiv = Number(node.querySelector('duration')?.textContent || 0);
+            timeQ += durDiv * qPerDiv;
+            continue;
           }
-          time+=dur;
+          if (node.tagName !== 'note') continue;
+
+          const isRest = node.querySelector('rest') !== null;
+          const isChordFollower = node.querySelector('chord') !== null;
+          const durDiv = Number(node.querySelector('duration')?.textContent || 0);
+          const durQ = durDiv * qPerDiv;
+
+          if (!isRest) {
+            const step = node.querySelector("step")?.textContent;
+            const alter = Number(node.querySelector("alter")?.textContent || 0);
+            const oct = Number(node.querySelector("octave")?.textContent);
+            if (step && Number.isFinite(oct)) {
+              const midi = 12*(oct+1) + stepToSemitone[step] + alter;
+              const qs = timeQ;
+              const qe = qs + durQ;
+              if (qe > qs) out.push({ p:midi, qs, qe });
+            }
+          }
+          if (!isChordFollower) timeQ += durQ;
         }
       }
     }
-    notes=collected; 
-    total = notes.length ? Math.max(...notes.map(n=>n.e)) : 0;
+    // merge parts, sort
+    out.sort((a,b)=>a.qs - b.qs);
+    notes = out;
+    totalQ = notes.length ? Math.max(...notes.map(n=>n.qe)) : 0;
   }
 
   // ---------- URL loader ----------
@@ -357,19 +361,18 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (!bpmLockedByURL) {
         const detected = await detectTempoFromXMLText(txt);
         if (detected && detected > 0) {
-          scoreBPM = detected;
           if (bpmSlider) bpmSlider.value = String(detected);
           if (bpmVal) bpmVal.textContent = String(detected);
           log('⏱ Tempo aus MusicXML:', detected, 'BPM');
         } else {
-          log('⏱ Kein Tempo in XML gefunden – Standard bleibt', scoreBPM, 'BPM');
+          log('⏱ Kein Tempo in XML gefunden – Standard bleibt', currentBPM(), 'BPM');
         }
       } else {
-        log('⏱ Tempo via URL festgelegt:', scoreBPM, 'BPM (überschreibt XML)');
+        log('⏱ Tempo via URL festgelegt:', currentBPM(), 'BPM (überschreibt XML)');
       }
 
       await renderXML(txt);
-      await parseXML(txt);
+      await parseXMLtoQuarters(txt);
 
       playBtn.disabled=stopBtn.disabled=!notes.length;
       drawRoll();
@@ -378,9 +381,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
 
-  // Debug + kick URL loader
-  setTimeout(()=>{
-    log('HTTP-Served?', location.protocol.startsWith('http') ? 'ja' : 'nein');
-  },0);
+  // Startup
+  setTimeout(()=>{ log('HTTP-Served?', location.protocol.startsWith('http') ? 'ja' : 'nein'); },0);
   loadFromURL();
 });
