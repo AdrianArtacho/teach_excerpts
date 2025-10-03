@@ -1,4 +1,4 @@
-/* app.js — single file player with OSMD, piano roll, visual transpose and score cursor highlight */
+/* app.js — player with OSMD, piano roll, visual transpose, score cursor (show on play), and URL flags */
 
 (() => {
   // ---------- Utilities ----------
@@ -77,7 +77,8 @@
 
   // OSMD + cursor
   let osmd = null;
-  let scoreCursorReady = false;
+  let scoreCursorReady = false;  // cursor available to use
+  let scoreCursorShown = false;  // currently visible
 
   // ---------- BPM helpers ----------
   const currentBPM = () => Number(bpmInput.value) || 100;
@@ -207,22 +208,45 @@
     await osmd.render();
 
     if (highlightScore && osmd.cursor) {
+      // NEW: initialize cursor silently (do NOT show at load)
       try {
-        osmd.cursor.show();
-        if (typeof osmd.cursor.reset === 'function') osmd.cursor.reset();
+        if (typeof osmd.cursor.hide === 'function') osmd.cursor.hide();
+        // Mark cursor as available but hidden; we'll show on play()
         scoreCursorReady = true;
-        log('🎯 Score highlight: cursor ready.');
+        scoreCursorShown = false;
+        log('🎯 Score highlight: cursor ready (hidden until Play).');
       } catch {
         scoreCursorReady = false;
-        log('⚠️ Score cursor could not be shown (non-fatal).');
+        scoreCursorShown = false;
+        log('⚠️ Score cursor could not be prepared (non-fatal).');
       }
     } else {
       scoreCursorReady = false;
+      scoreCursorShown = false;
     }
   }
 
+  function ensureCursorShownAt(qElapsed) {
+    if (!highlightScore || !scoreCursorReady || !osmd?.cursor) return;
+    if (!scoreCursorShown) {
+      try {
+        // Show and reset to beginning first time we start
+        osmd.cursor.show();
+        if (typeof osmd.cursor.reset === 'function') osmd.cursor.reset();
+        scoreCursorShown = true;
+      } catch {}
+    }
+    updateScoreCursor(qElapsed);
+  }
+
+  function hideCursor() {
+    if (!highlightScore || !osmd?.cursor) return;
+    try { osmd.cursor.hide(); } catch {}
+    scoreCursorShown = false;
+  }
+
   function updateScoreCursor(qElapsed) {
-    if (!highlightScore || !scoreCursorReady || !osmd || !osmd.cursor) return;
+    if (!highlightScore || !scoreCursorShown || !osmd || !osmd.cursor) return;
     const bpm = currentBPM();
     const ms = (qElapsed * 60000) / Math.max(1, bpm);
     try {
@@ -444,6 +468,14 @@
     if (!notesQ.length || playing) { if (!notesQ.length) log('⚠️ Keine Noten geladen.'); return; }
     playing = true;
     startedAt = performance.now() / 1000;
+
+    // NEW: show score cursor only now (not during load)
+    if (highlightScore && scoreCursorReady) {
+      try {
+        ensureCursorShownAt(0);
+      } catch {}
+    }
+
     scheduleAllAtCurrentTempo();
     tick();
   }
@@ -453,7 +485,8 @@
     rafId = null;
     clearScheduledAudio();
     panicAll();
-    drawRoll(); // clear playhead
+    hideCursor();                 // NEW: hide cursor when stopped
+    drawRoll();                   // clear playhead
   }
   function tick() {
     if (!playing) return;
@@ -469,7 +502,10 @@
     }
     drawRoll();
     drawPlayhead(Math.min(qElapsed, totalQ));
-    updateScoreCursor(Math.min(qElapsed, totalQ));
+
+    // Move cursor while playing
+    ensureCursorShownAt(qElapsed);
+
     rafId = requestAnimationFrame(tick);
   }
 
@@ -514,7 +550,7 @@
     const has = notesQ.length > 0;
     playBtn.disabled = stopBtn.disabled = !has;
 
-    // No autoplay by default; you can add your own flag if needed
+    // No autoplay by default
   }
 
   playBtn.addEventListener('click', start);
