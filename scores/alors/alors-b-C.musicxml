@@ -243,9 +243,6 @@
     <beam number="1">begin</beam>
     <notations>
      <tied type="stop" orientation="under" />
-        <articulations placement="above">
-            <staccato/>
-        </articulations>
     </notations>
    </note>
    <note color="#000000" default-x="100" default-y="-7">
@@ -274,11 +271,6 @@
     <voice>1</voice>
     <type>16th</type>
     <staff>1</staff>
-    <notations>
-        <articulations placement="above">
-            <staccato/>
-        </articulations>
-    </notations>
    </note>
    <note color="#000000" default-x="252">
     <pitch>
