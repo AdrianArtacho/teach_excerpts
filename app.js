@@ -1,5 +1,13 @@
-/* app.js — player with OSMD, piano roll, visual transpose, global audio transpose,
-   score cursor (show on play), BPM override, loop/hideLog/title flags, and URL loading. */
+/* app.js — OSMD + piano roll + audio, with:
+   - ?xml=... (MusicXML URL)
+   - ?bpm=NUMBER  (URL BPM overrides XML tempo)
+   - ?loop=1      (loop playback on)
+   - ?hideLog=1   (hide status log block)
+   - ?title=TEXT  (sets title text, emoji kept in HTML)
+   - ?transposeVis=INT  (visual-only semitone shift for keyboard lights)
+   - ?transposeAudio=INT (global audio semitone shift for what you hear)
+   - ?highlightScore=1  (show OSMD cursor while playing)
+*/
 
 (() => {
   // ---------- Utilities ----------
@@ -16,11 +24,11 @@
 
   // Flags
   const xmlURL         = params.get('xml') || '';
-  const urlBPM         = params.get('bpm');                   // number
-  const urlLoop        = params.get('loop') === '1';          // default off
-  const urlHideLog     = params.get('hideLog') === '1';       // hide status block
-  const transposeVis   = parseInt(params.get('transposeVis') || '0', 10) || 0;  // visual-only semitones
-  const transposeAudio = parseInt(params.get('transposeAudio') || '0', 10) || 0; // GLOBAL audio semitones
+  const urlBPM         = params.get('bpm');                    // number
+  const urlLoop        = params.get('loop') === '1';           // default off
+  const urlHideLog     = params.get('hideLog') === '1';        // hide status block
+  const transposeVis   = parseInt(params.get('transposeVis') || '0', 10) || 0;   // visual-only semitones
+  const transposeAudio = parseInt(params.get('transposeAudio') || '0', 10) || 0; // audio-only semitones
   const highlightScore = params.get('highlightScore') === '1';
   const titleParam     = params.get('title');
 
@@ -145,6 +153,10 @@
     clearScheduledAudio();
     for (const [m, v] of audio.voices) { try { v.osc.stop(); } catch {} }
     audio.voices.clear();
+    // Optionally dim all keys immediately
+    const L = getLeftmostIndex();
+    const allIdx = Array.from({length: TOTAL_KEYS}, (_, i) => L + i);
+    if (typeof kb.keysDim === 'function') kb.keysDim(allIdx);
   }
 
   // ---------- Manual keyboard mapping ----------
@@ -207,8 +219,6 @@
   }
 
   // ---------- OSMD ----------
-  let osmdHost = $('#osmd');
-
   async function renderXML(text) {
     if (!window.opensheetmusicdisplay) throw new Error('OSMD script not loaded.');
     if (!osmd) osmd = new opensheetmusicdisplay.OpenSheetMusicDisplay('osmd', { drawingParameters: 'compact' });
@@ -499,7 +509,7 @@
   function tick() {
     if (!playing) return;
     const secondsElapsed = performance.now() / 1000 - startedAt;
-    const qElapsed = secondsElapsed * quartersPerSecond();
+    const qElapsed = secondsPerQuarter() > 0 ? secondsElapsed / secondsPerQuarter() : 0;
 
     if (totalQ > 0 && qElapsed >= totalQ) {
       if (loopCb.checked) {
@@ -519,6 +529,7 @@
 
   // ---------- UI wiring ----------
   loopCb.checked = urlLoop;
+
   bpmInput.addEventListener('input', (e) => {
     bpmVal.textContent = String(e.target.value);
     if (playing) { stop(); start(); }
