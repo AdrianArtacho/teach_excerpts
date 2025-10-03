@@ -123,5 +123,7 @@ https://adrianartacho.github.io/teach_excerpts/?xml=./scores/alors0.musicxml
 
 ---
 
-👉 That’s the merged README.
-Would you like me to also add a **"Quick flag cheat sheet"** at the very top (like a one-liner for each)?
+## 👉 To-Do
+
+* Don't play tied notes
+* light-up score as well
