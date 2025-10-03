@@ -207,10 +207,7 @@
   }
 
   // ---------- OSMD ----------
-  let osmd = null;
   let osmdHost = $('#osmd');
-  let scoreCursorReady = false;
-  let scoreCursorShown = false;
 
   async function renderXML(text) {
     if (!window.opensheetmusicdisplay) throw new Error('OSMD script not loaded.');
