@@ -1,0 +1,3 @@
+[submodule "scores"]
+	path = scores
+	url = https://github.com/AdrianArtacho/score_excerpts.git
