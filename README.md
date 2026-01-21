@@ -6,6 +6,8 @@ It supports playback, note highlighting, and several configuration options via U
 👉 Live demo:
 [https://adrianartacho.github.io/teach_excerpts/?xml=./scores/alors0.musicxml&title=Alors%20On%20Danse](https://adrianartacho.github.io/teach_excerpts/?xml=./scores/alors0.musicxml&title=Alors%20On%20Danse)
 
+![img/gui.png](img/gui.png)
+
 ---
 
 ## 🚀 Run locally
